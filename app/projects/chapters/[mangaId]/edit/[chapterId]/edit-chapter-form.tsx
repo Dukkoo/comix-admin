@@ -150,7 +150,7 @@ export default function EditChapterForm({
         description: `Chapter ${chapterNumber} with ${finalImageUrls.length} pages has been updated`,
       });
 
-      router.push(`/admin/projects/chapters/${mangaId}`);
+      router.push(`/projects/chapters/${mangaId}`);
 
     } catch (error) {
       console.error("Error updating chapter:", error);
@@ -168,7 +168,7 @@ export default function EditChapterForm({
             <div className="flex items-center gap-4">
               <Button
                 type="button"
-                onClick={() => router.push(`/admin/projects/chapters/${mangaId}`)}
+                onClick={() => router.push(`/projects/chapters/${mangaId}`)}
                 className="bg-zinc-700 hover:bg-zinc-600 text-white p-2 rounded-lg"
               >
                 <ArrowLeft className="w-4 h-4" />

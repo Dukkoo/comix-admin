@@ -87,7 +87,7 @@ export default function NewMangaForm() {
         description: `"${formData.title}" has been added to your collection`,
       });
 
-      router.push("/admin/projects");
+      router.push("/projects");
     } catch (error) {
       console.error("Error creating manga:", error);
       toast.error("An unexpected error occurred");

@@ -108,11 +108,11 @@ export default function NewChapterForm({ mangaId, mangaTitle }: Props) {
           description: `Chapter ${chapterNumber} with ${chapterImages.length} pages has been added`,
         });
 
-        router.push(`/admin/projects/chapters/${mangaId}`);
+        router.push(`/projects/chapters/${mangaId}`);
       } catch (imageError) {
         console.error("Error uploading images:", imageError);
         toast.error("Chapter created but failed to upload images");
-        router.push(`/admin/projects/chapters/${mangaId}`);
+        router.push(`/projects/chapters/${mangaId}`);
       }
 
     } catch (error) {

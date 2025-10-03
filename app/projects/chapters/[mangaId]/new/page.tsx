@@ -27,21 +27,21 @@ export default async function NewChapterPage({ params }: Props) {
           <nav className="mb-6">
             <div className="flex items-center space-x-2 text-sm text-zinc-400">
               <a 
-                href="/admin/projects" 
+                href="/projects" 
                 className="hover:text-cyan-400 transition-colors cursor-pointer"
               >
                 Projects
               </a>
               <span>/</span>
               <a 
-                href={`/admin/projects/edit/${mangaId}`}
+                href={`/projects/edit/${mangaId}`}
                 className="hover:text-cyan-400 transition-colors cursor-pointer"
               >
                 {manga.title}
               </a>
               <span>/</span>
               <a 
-                href={`/admin/projects/chapters/${mangaId}`}
+                href={`/projects/chapters/${mangaId}`}
                 className="hover:text-cyan-400 transition-colors cursor-pointer"
               >
                 Chapters

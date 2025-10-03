@@ -166,7 +166,7 @@ export default function ChapterTable({
               asChild 
               className="px-8 py-4 text-lg font-semibold bg-zinc-800 hover:bg-cyan-600 text-white shadow-lg hover:shadow-xl transition-all duration-300 rounded-xl border-0"
             >
-              <Link href={`/admin/projects/chapters/${mangaId}/new`}>
+              <Link href={`/projects/chapters/${mangaId}/new`}>
                 <Plus className="w-5 h-5 mr-3" />
                 Шинэ бүлэг нэмэх
               </Link>
@@ -222,7 +222,7 @@ export default function ChapterTable({
                         size="sm" 
                         className="bg-green-500/20 hover:bg-green-500 text-green-400 hover:text-white border border-green-500/50 hover:border-green-500 transition-all duration-200 rounded-lg cursor-pointer h-8 w-8 p-0 flex items-center justify-center"
                       >
-                        <Link href={`/admin/projects/chapters/${mangaId}/edit/${chapter.id}`}>
+                        <Link href={`/projects/chapters/${mangaId}/edit/${chapter.id}`}>
                           <Edit2 className="w-3 h-3" />
                         </Link>
                       </Button>

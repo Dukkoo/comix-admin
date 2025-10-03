@@ -68,7 +68,7 @@ export const createManga = async (
       createdBy: verifiedToken.uid,
     });
 
-    revalidatePath("/admin/projects");
+    revalidatePath("/projects");
 
     return {
       error: false,
@@ -118,8 +118,8 @@ export const updateManga = async (
       updatedAt: new Date(),
     });
 
-    revalidatePath("/admin/projects");
-    revalidatePath(`/admin/projects/edit/${mangaId}`);
+    revalidatePath("/projects");
+    revalidatePath(`/projects/edit/${mangaId}`);
 
     return {
       error: false,
@@ -174,7 +174,7 @@ export const deleteManga = async (mangaId: string, authToken: string) => {
 
     await batch.commit();
 
-    revalidatePath("/admin/projects");
+    revalidatePath("/projects");
 
     return {
       error: false,
@@ -232,8 +232,8 @@ export const updateMangaImages = async (
 
     await firestore.collection("mangas").doc(mangaId).update(updateData);
 
-    revalidatePath("/admin/projects");
-    revalidatePath(`/admin/projects/edit/${mangaId}`);
+    revalidatePath("/projects");
+    revalidatePath(`/projects/edit/${mangaId}`);
 
     return {
       error: false,

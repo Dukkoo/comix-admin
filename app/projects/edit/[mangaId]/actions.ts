@@ -32,8 +32,8 @@ export const updateManga = async (data: Manga, authToken: string) => {
         updated: new Date(),
       });
 
-    revalidatePath(`/admin/projects`);
-    revalidatePath(`/admin/projects/edit/${id}`);
+    revalidatePath(`/projects`);
+    revalidatePath(`/projects/edit/${id}`);
     
     return {
       error: false,
@@ -89,8 +89,8 @@ export const saveMangaImages = async (
         });
     }
 
-    revalidatePath(`/admin/projects`);
-    revalidatePath(`/admin/projects/edit/${data.mangaId}`);
+    revalidatePath(`/projects`);
+    revalidatePath(`/projects/edit/${data.mangaId}`);
     
     return {
       error: false,

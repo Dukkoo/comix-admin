@@ -64,8 +64,8 @@ export const createChapter = async (
       chapters: chapterCount,
     });
 
-    revalidatePath(`/admin/projects/chapters/${mangaId}`);
-    revalidatePath(`/admin/projects/chapters/${mangaId}/new`);
+    revalidatePath(`/projects/chapters/${mangaId}`);
+    revalidatePath(`/projects/chapters/${mangaId}/new`);
 
     return {
       error: false,
@@ -109,7 +109,7 @@ export const saveChapterImages = async (
         pageCount: data.images.length,
       });
 
-    revalidatePath(`/admin/projects/chapters/${data.mangaId}`);
+    revalidatePath(`/projects/chapters/${data.mangaId}`);
 
     return {
       error: false,

@@ -34,14 +34,14 @@ export default async function ChaptersPage({ params, searchParams }: Props) {
           <nav className="mb-6">
             <div className="flex items-center space-x-2 text-sm text-zinc-400">
               <a 
-                href="/admin/projects" 
+                href="/projects" 
                 className="hover:text-cyan-400 transition-colors cursor-pointer"
               >
                 Projects
               </a>
               <span>/</span>
               <a 
-                href={`/admin/projects/edit/${mangaId}`}
+                href={`/projects/edit/${mangaId}`}
                 className="hover:text-cyan-400 transition-colors cursor-pointer"
               >
                 {manga.title}

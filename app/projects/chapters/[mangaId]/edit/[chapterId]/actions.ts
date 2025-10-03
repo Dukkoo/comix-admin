@@ -31,8 +31,8 @@ export const updateChapter = async (
         updatedAt: new Date(),
       });
 
-    revalidatePath(`/admin/projects/chapters/${mangaId}`);
-    revalidatePath(`/admin/projects/chapters/${mangaId}/edit/${chapterId}`);
+    revalidatePath(`/projects/chapters/${mangaId}`);
+    revalidatePath(`/projects/chapters/${mangaId}/edit/${chapterId}`);
 
     return {
       error: false,
@@ -79,8 +79,8 @@ export const saveChapterImages = async (
         updatedAt: new Date(),
       });
 
-    revalidatePath(`/admin/projects/chapters/${mangaId}`);
-    revalidatePath(`/admin/projects/chapters/${mangaId}/edit/${chapterId}`);
+    revalidatePath(`/projects/chapters/${mangaId}`);
+    revalidatePath(`/projects/chapters/${mangaId}/edit/${chapterId}`);
 
     return {
       error: false,
@@ -147,7 +147,7 @@ export const deleteChapterImage = async (
         updatedAt: new Date(),
       });
 
-    revalidatePath(`/admin/projects/chapters/${mangaId}/edit/${chapterId}`);
+    revalidatePath(`/projects/chapters/${mangaId}/edit/${chapterId}`);
 
     return {
       error: false,
