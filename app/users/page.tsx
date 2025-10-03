@@ -1,4 +1,3 @@
-// app/admin/users/page.tsx
 "use client";
 
 import { useState, useEffect } from "react";
@@ -7,8 +6,7 @@ import { useRouter } from "next/navigation";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Skeleton } from "@/components/ui/skeleton";
+import { Card, CardContent } from "@/components/ui/card";
 import {
   Table,
   TableBody,
@@ -24,7 +22,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Search, Users, Crown, Calendar, Zap } from "lucide-react";
+import { Search, Users, Zap } from "lucide-react";
 import { toast } from "sonner";
 
 interface User {
@@ -56,7 +54,7 @@ export default function AdminUsersPage() {
   const [totalPages, setTotalPages] = useState(1);
   const [totalCount, setTotalCount] = useState(0);
   const [filterStatus, setFilterStatus] = useState<string>("all");
-  const pageSize = 25; // Fixed page size
+  const pageSize = 25;
 
   const fetchUsers = async (page: number = 1, search?: string, status?: string) => {
     try {
@@ -140,7 +138,7 @@ export default function AdminUsersPage() {
       if (user.subscriptionDaysLeft === 0) {
         return (
           <span className="text-red-400 font-medium">
-            Expires today
+            Өнөөдөр дуусна
           </span>
         );
       } else if (user.subscriptionDaysLeft === 1) {
@@ -178,41 +176,11 @@ export default function AdminUsersPage() {
   if (loading && users.length === 0) {
     return (
       <div className="min-h-screen bg-zinc-900 p-6">
-        <div className="max-w-[1400px] mx-auto">
-          {/* Header Skeleton */}
-          <div className="mb-8">
-            <Skeleton className="h-8 w-48 mb-2 bg-zinc-800" />
-            <Skeleton className="h-4 w-96 bg-zinc-800" />
+        <div className="w-full">
+          <div className="flex flex-col items-center justify-center py-20">
+            <span className="loader"></span>
+            <p className="mt-4 text-zinc-400">Хэрэглэгчдийг уншиж байна...</p>
           </div>
-
-          {/* Search and Filters Skeleton */}
-          <Card className="bg-zinc-800/50 border-zinc-700/50 mb-6">
-            <CardContent className="p-6">
-              <div className="flex flex-col md:flex-row gap-4">
-                <Skeleton className="h-10 flex-1 bg-zinc-700" />
-                <Skeleton className="h-10 w-32 bg-zinc-700" />
-                <Skeleton className="h-10 w-24 bg-zinc-700" />
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* Table Skeleton */}
-          <Card className="bg-zinc-800/50 border-zinc-700/50">
-            <CardContent className="p-0">
-              <div className="space-y-4 p-6">
-                {Array.from({ length: 5 }).map((_, i) => (
-                  <div key={i} className="flex items-center space-x-4">
-                    <Skeleton className="h-4 w-16 bg-zinc-700" />
-                    <Skeleton className="h-4 w-32 bg-zinc-700" />
-                    <Skeleton className="h-4 w-48 bg-zinc-700" />
-                    <Skeleton className="h-6 w-20 bg-zinc-700" />
-                    <Skeleton className="h-4 w-24 bg-zinc-700" />
-                    <Skeleton className="h-4 w-16 bg-zinc-700" />
-                  </div>
-                ))}
-              </div>
-            </CardContent>
-          </Card>
         </div>
       </div>
     );
@@ -220,16 +188,8 @@ export default function AdminUsersPage() {
 
   return (
     <div className="min-h-screen bg-zinc-900 p-6">
-      <div className="max-w-[1400px] mx-auto">
-        {/* Header */}
-        <div className="mb-8">
-          <div className="flex items-center gap-3 mb-2">
-            <Users className="w-8 h-8 text-cyan-400" />
-            <h1 className="text-3xl font-bold text-white">ХЭРЭГЛЭГЧИЙН УДИРДЛАГА</h1>
-          </div>
-        </div>
+      <div className="w-full">
 
-        {/* Search and Filters */}
         <Card className="bg-zinc-800/50 border-zinc-700/50 mb-6">
           <CardContent className="p-6">
             <div className="flex flex-col md:flex-row gap-4">
@@ -262,7 +222,6 @@ export default function AdminUsersPage() {
           </CardContent>
         </Card>
 
-        {/* Users Table */}
         <Card className="bg-zinc-800/50 border-zinc-700/50">
           <CardContent className="p-0">
             <Table>
@@ -274,21 +233,19 @@ export default function AdminUsersPage() {
                   <TableHead className="text-zinc-300">Төлөв</TableHead>
                   <TableHead className="text-zinc-300">Хугацаа</TableHead>
                   <TableHead className="text-zinc-300">Оноо</TableHead>
+                  <TableHead className="text-zinc-300"></TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {loading ? (
-                  Array.from({ length: pageSize }).map((_, i) => (
-                    <TableRow key={i} className="border-zinc-700/50">
-                      <TableCell><Skeleton className="h-4 w-16 bg-zinc-700" /></TableCell>
-                      <TableCell><Skeleton className="h-4 w-24 bg-zinc-700" /></TableCell>
-                      <TableCell><Skeleton className="h-4 w-32 bg-zinc-700" /></TableCell>
-                      <TableCell><Skeleton className="h-6 w-20 bg-zinc-700" /></TableCell>
-                      <TableCell><Skeleton className="h-4 w-20 bg-zinc-700" /></TableCell>
-                      <TableCell><Skeleton className="h-4 w-16 bg-zinc-700" /></TableCell>
-                      <TableCell><Skeleton className="h-8 w-20 bg-zinc-700" /></TableCell>
-                    </TableRow>
-                  ))
+                  <TableRow>
+                    <TableCell colSpan={7} className="text-center py-12">
+                      <div className="flex flex-col items-center">
+                        <span className="loader"></span>
+                        <p className="mt-4 text-zinc-400">Уншиж байна...</p>
+                      </div>
+                    </TableCell>
+                  </TableRow>
                 ) : users.length === 0 ? (
                   <TableRow>
                     <TableCell colSpan={7} className="text-center py-8 text-zinc-400">
@@ -323,7 +280,7 @@ export default function AdminUsersPage() {
                         <Button
                           size="sm"
                           variant="outline"
-                          onClick={() => router.push(`/admin/users/${user.id}`)}
+                          onClick={() => router.push(`/users/${user.id}`)}
                           className="bg-zinc-700/50 border-zinc-600 text-white hover:bg-zinc-600 cursor-pointer"
                         >
                           Засварлах
@@ -337,7 +294,6 @@ export default function AdminUsersPage() {
           </CardContent>
         </Card>
 
-        {/* Pagination */}
         {totalPages > 1 && (
           <div className="flex justify-center items-center gap-2 mt-6">
             <Button

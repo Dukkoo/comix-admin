@@ -115,16 +115,15 @@ export default function AdminPopularManager() {
   );
 
   if (loading) {
-    return (
-      <div className="bg-zinc-800/30 backdrop-blur-sm border border-zinc-700/50 rounded-xl p-6">
-        <h2 className="text-lg font-bold text-white mb-6">Алдартай манга удирдлага</h2>
-        <div className="text-center py-8">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-cyan-400 mx-auto"></div>
-          <p className="text-zinc-400 mt-2">Ачаалж байна...</p>
-        </div>
+  return (
+    <div className="bg-zinc-800/30 backdrop-blur-sm border border-zinc-700/50 rounded-xl p-6">
+      <h2 className="text-lg font-bold text-white mb-6">Алдартай манга удирдлага</h2>
+      <div className="flex flex-col items-center justify-center py-12">
+        <span className="loader"></span>
       </div>
-    );
-  }
+    </div>
+  );
+}
 
   return (
     <div className="bg-zinc-800/30 backdrop-blur-sm border border-zinc-700/50 rounded-xl p-6">

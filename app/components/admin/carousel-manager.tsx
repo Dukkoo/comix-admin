@@ -142,18 +142,20 @@ export default function AdminCarouselManager() {
     }
   };
 
-  if (loading) {
-    return (
-      <Card className="bg-zinc-800/50 border-zinc-700">
-        <CardHeader>
-          <CardTitle className="text-white">Carousel удирдлага</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="text-zinc-400">Ачаалж байна...</div>
-        </CardContent>
-      </Card>
-    );
-  }
+    if (loading) {
+      return (
+        <Card className="bg-zinc-800/50 border-zinc-700">
+          <CardHeader>
+            <CardTitle className="text-white">Carousel удирдлага</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="flex flex-col items-center justify-center py-12">
+              <span className="loader"></span>
+            </div>
+          </CardContent>
+        </Card>
+      );
+    }
 
   return (
     <Card className="bg-zinc-800/50 border-zinc-700">

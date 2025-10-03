@@ -4,7 +4,6 @@ import { auth, firestore } from "@/firebase/server";
 import { z } from "zod";
 import { revalidatePath } from "next/cache";
 
-// Updated schema to match our current manga structure
 const mangaSchema = z.object({
   id: z.string().min(1, "ID is required"),
   title: z.string().min(1, "Title is required"),
@@ -17,7 +16,6 @@ const mangaSchema = z.object({
   chapters: z.number().min(0).optional(),
 });
 
-// Create a new manga
 export const createManga = async (
   mangaData: z.infer<typeof mangaSchema>,
   authToken: string
@@ -40,7 +38,6 @@ export const createManga = async (
       };
     }
 
-    // Check if manga with this ID already exists
     const existingManga = await firestore.collection("mangas").doc(validation.data.id).get();
     if (existingManga.exists) {
       return {
@@ -49,7 +46,6 @@ export const createManga = async (
       };
     }
 
-    // Use the provided ID from the form (4-digit random ID)
     await firestore.collection("mangas").doc(validation.data.id).set({
       title: validation.data.title,
       type: validation.data.type,
@@ -62,7 +58,7 @@ export const createManga = async (
       createdBy: verifiedToken.uid,
     });
 
-    revalidatePath("/admin/projects");
+    revalidatePath("/projects");
 
     return {
       error: false,
@@ -78,7 +74,6 @@ export const createManga = async (
   }
 };
 
-// Update an existing manga
 export const updateManga = async (
   {
     mangaId,
@@ -112,8 +107,8 @@ export const updateManga = async (
       updatedAt: new Date(),
     });
 
-    revalidatePath("/admin/projects");
-    revalidatePath(`/admin/projects/edit/${mangaId}`);
+    revalidatePath("/projects");
+    revalidatePath(`/projects/edit/${mangaId}`);
 
     return {
       error: false,
@@ -128,7 +123,6 @@ export const updateManga = async (
   }
 };
 
-// Delete a manga
 export const deleteManga = async (mangaId: string, authToken: string) => {
   try {
     const verifiedToken = await auth.verifyIdToken(authToken);
@@ -149,7 +143,6 @@ export const deleteManga = async (mangaId: string, authToken: string) => {
       };
     }
 
-    // Also delete all chapters associated with this manga
     const chaptersSnapshot = await firestore
       .collection("chapters")
       .where("mangaId", "==", mangaId)
@@ -157,17 +150,15 @@ export const deleteManga = async (mangaId: string, authToken: string) => {
 
     const batch = firestore.batch();
     
-    // Delete manga
     batch.delete(firestore.collection("mangas").doc(mangaId));
     
-    // Delete all chapters
     chaptersSnapshot.docs.forEach((doc) => {
       batch.delete(doc.ref);
     });
 
     await batch.commit();
 
-    revalidatePath("/admin/projects");
+    revalidatePath("/projects");
 
     return {
       error: false,
@@ -182,7 +173,6 @@ export const deleteManga = async (mangaId: string, authToken: string) => {
   }
 };
 
-// Update manga images
 export const updateMangaImages = async (
   {
     mangaId,
@@ -219,8 +209,8 @@ export const updateMangaImages = async (
 
     await firestore.collection("mangas").doc(mangaId).update(updateData);
 
-    revalidatePath("/admin/projects");
-    revalidatePath(`/admin/projects/edit/${mangaId}`);
+    revalidatePath("/projects");
+    revalidatePath(`/projects/edit/${mangaId}`);
 
     return {
       error: false,

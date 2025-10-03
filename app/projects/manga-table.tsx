@@ -75,7 +75,7 @@ export default function MangaTable({ page = 1 }: { page?: number }) {
     }
     params.delete('page');
     
-    const newUrl = params.toString() ? `/admin/projects?${params.toString()}` : '/admin/projects';
+    const newUrl = params.toString() ? `/projects?${params.toString()}` : '/projects';
     router.replace(newUrl);
   }, [debouncedSearchTerm, router, searchParams]);
 
@@ -166,9 +166,7 @@ export default function MangaTable({ page = 1 }: { page?: number }) {
   return (
     <div className="min-h-screen bg-zinc-900 p-4 pl-20 md:pl-24 lg:pl-6">
       <div className="w-full mx-auto px-2">
-        {/* Header with Search and Button - Side by side */}
         <div className="flex flex-col md:flex-row items-center justify-center gap-4 mb-8 mt-6">
-          {/* Search Form */}
           <form onSubmit={handleSearch} className="w-full md:flex-1 max-w-xl">
             <div className="relative">
               <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-zinc-400 w-4 h-4" />
@@ -182,9 +180,8 @@ export default function MangaTable({ page = 1 }: { page?: number }) {
             </div>
           </form>
 
-          {/* New Manga Button */}
           <Button asChild className="w-full md:w-auto px-8 py-4 text-base font-semibold bg-zinc-800 hover:bg-cyan-600 text-white shadow-lg hover:shadow-xl transition-all duration-300 rounded-xl border-0 whitespace-nowrap">
-            <Link href="/admin/projects/new">
+            <Link href="/projects/new">
               <Plus className="w-5 h-5 mr-2" />
               Шинэ зурагт ном нэмэх
             </Link>
@@ -316,7 +313,7 @@ export default function MangaTable({ page = 1 }: { page?: number }) {
                           size="sm" 
                           className="bg-blue-500/20 hover:bg-blue-500 text-blue-400 hover:text-white border border-blue-500/50 hover:border-blue-500 transition-all duration-200 rounded-lg"
                         >
-                          <Link href={`/admin/projects/chapters/${manga.id}`}>
+                          <Link href={`/projects/chapters/${manga.id}`}>
                             <Plus className="w-4 h-4" />
                           </Link>
                         </Button>
@@ -325,7 +322,7 @@ export default function MangaTable({ page = 1 }: { page?: number }) {
                           size="sm" 
                           className="bg-green-500/20 hover:bg-green-500 text-green-400 hover:text-white border border-green-500/50 hover:border-green-500 transition-all duration-200 rounded-lg"
                         >
-                          <Link href={`/admin/projects/edit/${manga.id}`}>
+                          <Link href={`/projects/edit/${manga.id}`}>
                             <Edit2 className="w-4 h-4" />
                           </Link>
                         </Button>
@@ -349,7 +346,7 @@ export default function MangaTable({ page = 1 }: { page?: number }) {
                   <PaginationContent>
                     <PaginationItem>
                       <PaginationPrevious 
-                        href={page > 1 ? `/admin/projects?page=${page - 1}${debouncedSearchTerm ? `&search=${encodeURIComponent(debouncedSearchTerm)}` : ''}` : undefined}
+                        href={page > 1 ? `/projects?page=${page - 1}${debouncedSearchTerm ? `&search=${encodeURIComponent(debouncedSearchTerm)}` : ''}` : undefined}
                         className={page === 1 ? "pointer-events-none opacity-50" : ""}
                       />
                     </PaginationItem>
@@ -365,7 +362,7 @@ export default function MangaTable({ page = 1 }: { page?: number }) {
                         return (
                           <PaginationItem key={i}>
                             <PaginationLink
-                              href={`/admin/projects?page=${pageNum}${debouncedSearchTerm ? `&search=${encodeURIComponent(debouncedSearchTerm)}` : ''}`}
+                              href={`/projects?page=${pageNum}${debouncedSearchTerm ? `&search=${encodeURIComponent(debouncedSearchTerm)}` : ''}`}
                               isActive={page === pageNum}
                             >
                               {pageNum}
@@ -387,7 +384,7 @@ export default function MangaTable({ page = 1 }: { page?: number }) {
                     
                     <PaginationItem>
                       <PaginationNext 
-                        href={page < totalPages ? `/admin/projects?page=${page + 1}${debouncedSearchTerm ? `&search=${encodeURIComponent(debouncedSearchTerm)}` : ''}` : undefined}
+                        href={page < totalPages ? `/projects?page=${page + 1}${debouncedSearchTerm ? `&search=${encodeURIComponent(debouncedSearchTerm)}` : ''}` : undefined}
                         className={page === totalPages ? "pointer-events-none opacity-50" : ""}
                       />
                     </PaginationItem>

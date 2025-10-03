@@ -147,9 +147,8 @@ function SubscriptionPieChart({ data }: { data: AnalyticsData['pieData'] }) {
 // Loading component
 function LoadingSpinner() {
   return (
-    <div className="flex items-center justify-center h-64">
-      <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-cyan-600"></div>
-      <p className="ml-4 text-zinc-400 font-roboto">Уншиж байна...</p>
+    <div className="flex flex-col items-center justify-center h-64">
+      <span className="loader"></span>
     </div>
   );
 }
