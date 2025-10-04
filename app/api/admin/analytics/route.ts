@@ -50,13 +50,8 @@ export async function GET(request: NextRequest) {
           .collection("chapters")
           .get();
         totalChapters += chaptersSnapshot.size;
-        
-        // Debug subcollection
-        if (chaptersSnapshot.size > 0) {
-          console.log(`Debug - Manga ${mangaDoc.id} has ${chaptersSnapshot.size} chapters in subcollection`);
-        }
       } catch (error) {
-        console.log(`Debug - No subcollection for manga ${mangaDoc.id}:`, error instanceof Error ? error.message : error);
+        // Silent fail - try next method
       }
     }
     
@@ -66,8 +61,6 @@ export async function GET(request: NextRequest) {
         const mangaData = mangaDoc.data();
         const chaptersCount = mangaData.chapters || mangaData.chaptersCount || mangaData.totalChapters || 0;
         totalChapters += chaptersCount;
-        console.log(`Debug - Manga ${mangaDoc.id} chapters field:`, chaptersCount);
-        console.log(`Debug - Manga ${mangaDoc.id} data:`, mangaData);
       });
     }
     
@@ -75,12 +68,7 @@ export async function GET(request: NextRequest) {
     if (totalChapters === 0) {
       const chaptersSnapshot = await firestore.collection("chapters").get();
       totalChapters = chaptersSnapshot.size;
-      console.log("Debug - Using standalone chapters collection:", totalChapters);
     }
-    
-    // Debug logging
-    console.log("Debug - Total mangas:", totalMangas);
-    console.log("Debug - Total chapters (final):", totalChapters);
 
     // Process user data
     let subscribedCount = 0;
@@ -143,8 +131,8 @@ export async function GET(request: NextRequest) {
         totalUsers,
         subscribedUsers: subscribedCount,
         freeUsers: freeCount,
-        totalMangas, // Real manga count from database
-        totalChapters, // Real chapter count from database
+        totalMangas,
+        totalChapters,
         averageXP,
         subscriptionRate: Math.round(subscriptionRate * 100) / 100
       },

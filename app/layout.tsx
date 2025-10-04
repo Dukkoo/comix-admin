@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import './globals.css';
 import { AuthProvider } from './providers';
-import Sidebar from './components/sidebar';
+import ConditionalLayout from './components/conditionalLayout';
 import { Nunito } from 'next/font/google';
 
 const nunito = Nunito({
@@ -19,12 +19,9 @@ export default function RootLayout({
     <html lang="en" className={`dark ${nunito.variable}`}>
       <body className="bg-zinc-900 text-white antialiased font-nunito">
         <AuthProvider>
-          <div className="flex h-screen overflow-hidden">
-            <Sidebar />
-            <main className="flex-1 overflow-y-auto bg-zinc-900">
-              {children}
-            </main>
-          </div>
+          <ConditionalLayout>
+            {children}
+          </ConditionalLayout>
         </AuthProvider>
       </body>
     </html>
