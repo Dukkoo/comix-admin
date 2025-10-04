@@ -22,6 +22,7 @@ export default function EditMangaForm({ mangaId }: EditMangaFormProps) {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [initialLoading, setInitialLoading] = useState(true);
+  const [authToken, setAuthToken] = useState<string>(""); // ШИНЭ
   const [formData, setFormData] = useState({
     title: "",
     type: "",
@@ -39,16 +40,22 @@ export default function EditMangaForm({ mangaId }: EditMangaFormProps) {
   const loadManga = async () => {
     if (!mangaId) {
       toast.error("No manga ID provided");
-      router.push("/admin/projects");
+      router.push("/projects");
       return;
     }
 
     try {
+      // ШИНЭ: Get auth token
+      const token = await auth?.currentUser?.getIdToken();
+      if (token) {
+        setAuthToken(token);
+      }
+
       const response = await fetch(`/api/mangas/${mangaId}`);
       
       if (!response.ok) {
         toast.error("Failed to load manga");
-        router.push("/admin/projects");
+        router.push("/projects");
         return;
       }
 
@@ -71,7 +78,7 @@ export default function EditMangaForm({ mangaId }: EditMangaFormProps) {
     } catch (error) {
       console.error("Error loading manga:", error);
       toast.error("Failed to load manga");
-      router.push("/admin/projects");
+      router.push("/projects");
     } finally {
       setInitialLoading(false);
     }
@@ -120,7 +127,7 @@ export default function EditMangaForm({ mangaId }: EditMangaFormProps) {
       }
 
       toast.success("Manga updated successfully");
-      router.push("/admin/projects");
+      router.push("/projects");
     } catch (error) {
       console.error("Error updating manga:", error);
       toast.error("An unexpected error occurred");
@@ -144,13 +151,12 @@ export default function EditMangaForm({ mangaId }: EditMangaFormProps) {
     <div className="min-h-screen bg-zinc-900 p-6">
       <div className="max-w-2xl mx-auto">
         <div className="bg-zinc-800/50 border border-zinc-700/50 rounded-xl p-6">
-          {/* Header */}
           <div className="flex items-center justify-between mb-6">
             <div>
               <h1 className="text-2xl font-bold text-white">Зурагт ном засварлах</h1>
             </div>
             <Link 
-              href="/admin/projects"
+              href="/projects"
               className="flex items-center space-x-2 px-4 py-2 bg-zinc-700 hover:bg-zinc-600 text-white rounded-lg transition-colors"
             >
               <ArrowLeft className="w-4 h-4" />
@@ -158,9 +164,7 @@ export default function EditMangaForm({ mangaId }: EditMangaFormProps) {
             </Link>
           </div>
 
-          {/* Form */}
           <form onSubmit={handleSubmit} className="space-y-6">
-            {/* Title */}
             <div className="space-y-2">
               <Label htmlFor="title" className="text-zinc-300">Нэр</Label>
               <Input
@@ -173,7 +177,6 @@ export default function EditMangaForm({ mangaId }: EditMangaFormProps) {
               />
             </div>
 
-            {/* Type */}
             <div className="space-y-2">
               <Label className="text-zinc-300">Төрөл</Label>
               <Select value={formData.type} onValueChange={(value) => handleSelectChange("type", value)}>
@@ -190,7 +193,6 @@ export default function EditMangaForm({ mangaId }: EditMangaFormProps) {
               </Select>
             </div>
 
-            {/* Status */}
             <div className="space-y-2">
               <Label className="text-zinc-300">Төлөв</Label>
               <Select value={formData.status} onValueChange={(value) => handleSelectChange("status", value as "ongoing" | "finished")}>
@@ -204,7 +206,6 @@ export default function EditMangaForm({ mangaId }: EditMangaFormProps) {
               </Select>
             </div>
 
-            {/* Description */}
             <div className="space-y-2">
               <Label htmlFor="description" className="text-zinc-300">Товч тайлбар</Label>
               <Textarea
@@ -217,7 +218,6 @@ export default function EditMangaForm({ mangaId }: EditMangaFormProps) {
               />
             </div>
 
-            {/* Images - 3-column grid */}
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
               <div className="space-y-2">
                 <Label className="text-zinc-300">Нүүр зураг</Label>
@@ -227,6 +227,7 @@ export default function EditMangaForm({ mangaId }: EditMangaFormProps) {
                   mangaId={mangaId}
                   imageType="mangaImage"
                   label="Зураг оруулах"
+                  authToken={authToken}
                 />
               </div>
 
@@ -238,6 +239,7 @@ export default function EditMangaForm({ mangaId }: EditMangaFormProps) {
                   mangaId={mangaId}
                   imageType="coverImage"
                   label="Зураг оруулах"
+                  authToken={authToken}
                 />
               </div>
 
@@ -249,11 +251,11 @@ export default function EditMangaForm({ mangaId }: EditMangaFormProps) {
                   mangaId={mangaId}
                   imageType="avatarImage"
                   label="Зураг оруулах"
+                  authToken={authToken}
                 />
               </div>
             </div>
 
-            {/* Submit Button */}
             <Button
               type="submit"
               disabled={loading || !formData.title || !formData.type}
