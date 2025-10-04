@@ -10,7 +10,7 @@ import { useRouter } from "next/navigation";
 import { useState, useRef } from "react";
 import { toast } from "sonner";
 import { createManga } from "@/utils/manga-api";
-import { uploadToR2Server } from "@/app/actions/upload";
+import { getPresignedUploadUrl } from "@/app/actions/upload";
 import Image from "next/image";
 
 export default function NewMangaForm() {
@@ -24,22 +24,18 @@ export default function NewMangaForm() {
     description: "",
   });
   
-  // Store files locally until submit
   const [coverImageFile, setCoverImageFile] = useState<File | null>(null);
   const [mangaImageFile, setMangaImageFile] = useState<File | null>(null);
   const [avatarImageFile, setAvatarImageFile] = useState<File | null>(null);
   
-  // Preview URLs
   const [coverPreview, setCoverPreview] = useState<string>("");
   const [mangaPreview, setMangaPreview] = useState<string>("");
   const [avatarPreview, setAvatarPreview] = useState<string>("");
 
-  // File input refs
   const coverInputRef = useRef<HTMLInputElement>(null);
   const mangaInputRef = useRef<HTMLInputElement>(null);
   const avatarInputRef = useRef<HTMLInputElement>(null);
 
-  // Generate manga ID for image uploads
   const [mangaId] = useState(() => Math.floor(1000 + Math.random() * 9000).toString());
 
   const handleFileSelect = (
@@ -80,17 +76,11 @@ export default function NewMangaForm() {
     e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>
   ) => {
     const { name, value } = e.target;
-    setFormData((prev) => ({
-      ...prev,
-      [name]: value,
-    }));
+    setFormData((prev) => ({ ...prev, [name]: value }));
   };
 
   const handleSelectChange = (name: string, value: string) => {
-    setFormData((prev) => ({
-      ...prev,
-      [name]: value,
-    }));
+    setFormData((prev) => ({ ...prev, [name]: value }));
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -106,43 +96,43 @@ export default function NewMangaForm() {
         return;
       }
 
+      const uploadImage = async (file: File, folder: string) => {
+        const timestamp = Date.now();
+        const cleanFileName = file.name.replace(/[^a-zA-Z0-9.-]/g, "_");
+        const path = `mangas/${mangaId}/${folder}/${timestamp}-${cleanFileName}`;
+
+        const { presignedUrl, publicUrl, error } = await getPresignedUploadUrl(
+          path,
+          file.type,
+          token
+        );
+
+        if (error || !presignedUrl || !publicUrl) {
+          throw new Error("Failed to get upload URL");
+        }
+
+        const uploadResponse = await fetch(presignedUrl, {
+          method: "PUT",
+          body: file,
+          headers: { "Content-Type": file.type },
+        });
+
+        if (!uploadResponse.ok) {
+          throw new Error("Failed to upload image");
+        }
+
+        return publicUrl;
+      };
+
       toast.loading("Uploading images...");
 
-      // Upload images only when submitting
-      let coverImageUrl = "";
-      let mangaImageUrl = "";
-      let avatarImageUrl = "";
+      const [coverImageUrl, mangaImageUrl, avatarImageUrl] = await Promise.all([
+        coverImageFile ? uploadImage(coverImageFile, "cover") : Promise.resolve(""),
+        mangaImageFile ? uploadImage(mangaImageFile, "manga") : Promise.resolve(""),
+        avatarImageFile ? uploadImage(avatarImageFile, "avatar") : Promise.resolve(""),
+      ]);
 
-      // Upload cover image
-      if (coverImageFile) {
-        const timestamp = Date.now();
-        const cleanFileName = coverImageFile.name.replace(/[^a-zA-Z0-9.-]/g, '_');
-        const path = `mangas/${mangaId}/cover/${timestamp}-${cleanFileName}`;
-        const arrayBuffer = await coverImageFile.arrayBuffer();
-        const result = await uploadToR2Server(arrayBuffer, path, coverImageFile.type);
-        if (result.url) coverImageUrl = result.url;
-      }
-
-      // Upload manga image
-      if (mangaImageFile) {
-        const timestamp = Date.now();
-        const cleanFileName = mangaImageFile.name.replace(/[^a-zA-Z0-9.-]/g, '_');
-        const path = `mangas/${mangaId}/manga/${timestamp}-${cleanFileName}`;
-        const arrayBuffer = await mangaImageFile.arrayBuffer();
-        const result = await uploadToR2Server(arrayBuffer, path, mangaImageFile.type);
-        if (result.url) mangaImageUrl = result.url;
-      }
-
-      // Upload avatar image
-      if (avatarImageFile) {
-        const timestamp = Date.now();
-        const cleanFileName = avatarImageFile.name.replace(/[^a-zA-Z0-9.-]/g, '_');
-        const path = `mangas/${mangaId}/avatar/${timestamp}-${cleanFileName}`;
-        const arrayBuffer = await avatarImageFile.arrayBuffer();
-        const result = await uploadToR2Server(arrayBuffer, path, avatarImageFile.type);
-        if (result.url) avatarImageUrl = result.url;
-      }
-
+      toast.dismiss();
       toast.loading("Creating manga...");
 
       const mangaData = {
@@ -289,11 +279,11 @@ export default function NewMangaForm() {
                     <SelectValue placeholder="Зурагт номын төрлөө сонгоно уу" />
                   </SelectTrigger>
                   <SelectContent className="bg-zinc-800 border-zinc-600 text-white">
-                    <SelectItem value="manga">Манга</SelectItem>
-                    <SelectItem value="manhwa">Манхва</SelectItem>
-                    <SelectItem value="manhua">Манхуа</SelectItem>
-                    <SelectItem value="webtoon">Вебтүүн</SelectItem>
-                    <SelectItem value="comic">Комик</SelectItem>
+                    <SelectItem value="manga" className="cursor-pointer">Манга</SelectItem>
+                    <SelectItem value="manhwa" className="cursor-pointer">Манхва</SelectItem>
+                    <SelectItem value="manhua" className="cursor-pointer">Манхуа</SelectItem>
+                    <SelectItem value="webtoon" className="cursor-pointer">Вебтүүн</SelectItem>
+                    <SelectItem value="comic" className="cursor-pointer">Комик</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -307,8 +297,8 @@ export default function NewMangaForm() {
                     <SelectValue placeholder="Select status" />
                   </SelectTrigger>
                   <SelectContent className="bg-zinc-800 border-zinc-600 text-white">
-                    <SelectItem value="ongoing">Гарч байгаа</SelectItem>
-                    <SelectItem value="finished">Дууссан</SelectItem>
+                    <SelectItem value="ongoing" className="cursor-pointer">Гарч байгаа</SelectItem>
+                    <SelectItem value="finished" className="cursor-pointer">Дууссан</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
