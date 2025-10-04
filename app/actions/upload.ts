@@ -1,6 +1,7 @@
 "use server";
 
-import { S3Client, DeleteObjectCommand } from "@aws-sdk/client-s3";
+import { S3Client, PutObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
 const r2Client = new S3Client({
   region: "auto",
@@ -11,7 +12,28 @@ const r2Client = new S3Client({
   },
 });
 
-// NEW: Client-side upload using presigned URL
+// Direct upload (for chapters and backward compatibility)
+export async function uploadToR2Server(
+  fileBuffer: ArrayBuffer,
+  path: string,
+  contentType: string
+): Promise<{ url?: string; error?: string }> {
+  try {
+    await r2Client.send(new PutObjectCommand({
+      Bucket: process.env.R2_BUCKET_NAME!,
+      Key: path,
+      Body: Buffer.from(fileBuffer),
+      ContentType: contentType,
+    }));
+    
+    return { url: `${process.env.R2_PUBLIC_URL}/${path}` };
+  } catch (error) {
+    console.error("Error uploading to R2:", error);
+    return { error: "Upload failed" };
+  }
+}
+
+// Presigned URL upload (for manga images)
 export async function getPresignedUploadUrl(
   path: string,
   contentType: string,
@@ -42,6 +64,7 @@ export async function getPresignedUploadUrl(
   }
 }
 
+// Delete from R2
 export async function deleteFromR2Server(path: string): Promise<{ error?: string }> {
   try {
     await r2Client.send(
