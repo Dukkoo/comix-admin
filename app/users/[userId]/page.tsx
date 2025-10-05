@@ -65,7 +65,7 @@ export default function UserEditPage({ params }: UserEditPageProps) {
       
       if (!token) {
         toast.error("Authentication required");
-        router.push("/admin/users");
+        router.push("/users");
         return;
       }
 
@@ -73,7 +73,7 @@ export default function UserEditPage({ params }: UserEditPageProps) {
       
       if (!result.success || !result.data) {
         toast.error(result.error || "Failed to fetch user");
-        router.push("/admin/users");
+        router.push("/users");
         return;
       }
 
@@ -82,7 +82,7 @@ export default function UserEditPage({ params }: UserEditPageProps) {
     } catch (error) {
       console.error('Error fetching user:', error);
       toast.error("Failed to fetch user data");
-      router.push("/admin/users");
+      router.push("/users");
     } finally {
       setLoading(false);
     }

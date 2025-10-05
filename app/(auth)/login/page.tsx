@@ -50,10 +50,6 @@ export default function LoginPage() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-zinc-900">
       <div className="max-w-md w-full p-8 bg-zinc-800 rounded-lg shadow-xl border border-zinc-700">
-        <div className="text-center mb-8">
-          <h1 className="text-3xl font-bold text-white mb-2">Admin Panel</h1>
-          <p className="text-zinc-400 text-sm">Comix Admin Dashboard</p>
-        </div>
         
         {error && (
           <div className="mb-4 p-3 bg-red-500/10 border border-red-500/20 text-red-400 rounded text-sm">

@@ -10,6 +10,10 @@ const nunito = Nunito({
   variable: '--font-nunito',
 });
 
+export const metadata = {
+  title: 'Comix Admin',
+};
+
 export default function RootLayout({
   children,
 }: {
