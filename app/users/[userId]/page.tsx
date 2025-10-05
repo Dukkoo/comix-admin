@@ -4,7 +4,7 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from '@/app/providers';
-import { ArrowLeft, Crown, Calendar, Mail, User, Zap, Edit, Plus, Minus } from "lucide-react";
+import { ArrowLeft, Crown, Calendar, Mail, User, Zap, Edit, Plus, Minus, Hash } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -15,6 +15,7 @@ import { updateUser, getUser } from "./actions";
 
 interface User {
   id: string;
+  userId?: number; // 5 оронтой ID
   username: string;
   email: string;
   xp: number;
@@ -272,7 +273,12 @@ export default function UserEditPage({ params }: UserEditPageProps) {
                     <Mail className="w-3 h-3" />
                     {user.email}
                   </p>
-                  <p className="text-xs text-zinc-500 font-mono">ID: {user.id}</p>
+                  {user.userId && (
+                    <p className="text-sm text-cyan-400 font-mono flex items-center gap-1">
+                      <Hash className="w-3 h-3" />
+                      ID: {user.userId}
+                    </p>
+                  )}
                 </div>
               </div>
 

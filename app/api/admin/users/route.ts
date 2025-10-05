@@ -4,6 +4,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 interface UserData {
   id: string;
+  userId?: number; // 5 оронтой ID
   username: string;
   email: string;
   xp: number;
@@ -62,6 +63,7 @@ export async function GET(request: NextRequest) {
       
       return {
         id: authUser.uid,
+        userId: firestoreData?.userId, // 5 оронтой ID
         username: firestoreData?.username || authUser.displayName || authUser.email?.split('@')[0] || 'Unknown',
         email: authUser.email || 'No email',
         xp: firestoreData?.xp || 0,
@@ -75,11 +77,19 @@ export async function GET(request: NextRequest) {
     // Apply search filter
     if (search.trim()) {
       const searchTerm = search.toLowerCase();
-      allUsers = allUsers.filter(user => 
-        user.id.toLowerCase().includes(searchTerm) ||
-        user.username?.toLowerCase().includes(searchTerm) ||
-        user.email?.toLowerCase().includes(searchTerm)
-      );
+      const searchNumber = parseInt(search);
+      
+      allUsers = allUsers.filter(user => {
+        // Хэрэв тоо бол userId-аар хайна
+        if (!isNaN(searchNumber) && user.userId) {
+          return user.userId === searchNumber;
+        }
+        
+        // Биш бол Firebase UID, нэр, имэйлээр хайна
+        return user.id.toLowerCase().includes(searchTerm) ||
+               user.username?.toLowerCase().includes(searchTerm) ||
+               user.email?.toLowerCase().includes(searchTerm);
+      });
     }
 
     // Calculate subscription days left for each user and auto-update expired ones

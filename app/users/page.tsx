@@ -27,6 +27,7 @@ import { toast } from "sonner";
 
 interface User {
   id: string;
+  userId?: number; // 5 оронтой ID
   username: string;
   email: string;
   xp: number;
@@ -196,7 +197,7 @@ export default function AdminUsersPage() {
               <div className="flex-1 relative">
                 <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-zinc-400 w-4 h-4" />
                 <Input
-                  placeholder="Хэрэглэгчийг ID-аар хайх"
+                  placeholder="Хэрэглэгчийг 5 оронтой ID-аар хайх (жнь: 12345)"
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
                   onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
@@ -256,7 +257,7 @@ export default function AdminUsersPage() {
                   users.map((user) => (
                     <TableRow key={user.id} className="border-zinc-700/50 hover:bg-zinc-800/30">
                       <TableCell className="text-zinc-300 font-mono text-sm">
-                        {user.id}
+                        {user.userId || user.id}
                       </TableCell>
                       <TableCell className="text-white font-medium">
                         {user.username}

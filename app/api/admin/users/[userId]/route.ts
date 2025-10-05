@@ -48,6 +48,7 @@ export async function GET(
     // Combine auth and firestore data
     const userData = {
       id: authUser.uid,
+      userId: firestoreData?.userId, // 5 оронтой ID
       username: firestoreData?.username || authUser.displayName || authUser.email?.split('@')[0] || 'Unknown',
       email: authUser.email || 'No email',
       xp: firestoreData?.xp || 0,
