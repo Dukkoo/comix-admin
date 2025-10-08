@@ -1,7 +1,7 @@
-import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
-import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { NextRequest, NextResponse } from "next/server";
+import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
 import { auth } from "@/firebase/server";
+import sharp from "sharp";
 
 const r2Client = new S3Client({
   region: "auto",
@@ -14,7 +14,7 @@ const r2Client = new S3Client({
 
 export async function POST(request: NextRequest) {
   try {
-    // Check authentication
+    // Auth check
     const authHeader = request.headers.get("authorization");
     if (!authHeader?.startsWith("Bearer ")) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -24,33 +24,81 @@ export async function POST(request: NextRequest) {
     const verifiedToken = await auth.verifyIdToken(token);
 
     if (!verifiedToken.admin) {
-      return NextResponse.json({ error: "Admin access required" }, { status: 403 });
+      return NextResponse.json({ error: "Admin required" }, { status: 403 });
     }
 
-    const { path, contentType } = await request.json();
+    // Get form data
+    const formData = await request.formData();
+    const file = formData.get("file") as File;
+    const path = formData.get("path") as string;
 
-    // Generate presigned URL (valid for 10 minutes)
+    if (!file || !path) {
+      return NextResponse.json({ error: "Missing file or path" }, { status: 400 });
+    }
+
+    // Convert to buffer
+    const arrayBuffer = await file.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
+
+    let finalBuffer: Buffer;
+    let finalPath: string;
+
+    // Шалгах: WebP эсэх
+    const isWebP = file.type === "image/webp" || file.name.toLowerCase().endsWith('.webp');
+
+    if (isWebP) {
+      // WebP бол optimize л хийх (давхар conversion хийхгүй)
+      finalBuffer = await sharp(buffer)
+        .webp({ 
+          quality: 85,
+          effort: 6
+        })
+        .toBuffer();
+      
+      finalPath = path.replace(/\.(jpg|jpeg|png|webp)$/i, '.webp');
+    } else {
+      // PNG/JPG бол WebP болгох
+      finalBuffer = await sharp(buffer)
+        .webp({ 
+          quality: 85,
+          effort: 6
+        })
+        .toBuffer();
+      
+      finalPath = path.replace(/\.(jpg|jpeg|png)$/i, '.webp');
+    }
+
+    // R2 руу upload
     const command = new PutObjectCommand({
       Bucket: process.env.R2_BUCKET_NAME!,
-      Key: path,
-      ContentType: contentType,
+      Key: finalPath,
+      Body: finalBuffer,
+      ContentType: "image/webp",
     });
 
-    const presignedUrl = await getSignedUrl(r2Client, command, {
-      expiresIn: 600, // 10 minutes
-    });
+    await r2Client.send(command);
 
-    const publicUrl = `${process.env.R2_PUBLIC_URL}/${path}`;
+    // Public URL
+    const publicUrl = `${process.env.R2_PUBLIC_URL}/${finalPath}`;
 
     return NextResponse.json({
-      presignedUrl,
-      publicUrl,
+      success: true,
+      url: publicUrl,
     });
+
   } catch (error) {
-    console.error("Error generating presigned URL:", error);
+    console.error("Upload error:", error);
     return NextResponse.json(
-      { error: "Failed to generate presigned URL" },
+      { error: "Upload failed", details: error instanceof Error ? error.message : "Unknown error" },
       { status: 500 }
     );
   }
 }
+
+// Vercel timeout багасгах
+export const maxDuration = 60; // 60 seconds (Pro plan)
+export const config = {
+  api: {
+    bodyParser: false,
+  },
+};

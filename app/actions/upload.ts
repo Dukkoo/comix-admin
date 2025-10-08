@@ -1,7 +1,7 @@
 "use server";
 
 import { S3Client, PutObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
-import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+import sharp from "sharp";
 
 const r2Client = new S3Client({
   region: "auto",
@@ -12,28 +12,77 @@ const r2Client = new S3Client({
   },
 });
 
-// Direct upload (for chapters and backward compatibility)
+// Direct upload WITH SHARP WEBP CONVERSION
 export async function uploadToR2Server(
   fileBuffer: ArrayBuffer,
   path: string,
   contentType: string
 ): Promise<{ url?: string; error?: string }> {
   try {
+    const buffer = Buffer.from(fileBuffer);
+    
+    let finalBuffer: Buffer;
+    let finalPath: string;
+    
+    // Шалгах: зураг эсэх
+    const isImage = contentType.startsWith('image/');
+    
+    if (!isImage) {
+      // Зураг биш бол (PDF гэх мэт) шууд upload
+      await r2Client.send(new PutObjectCommand({
+        Bucket: process.env.R2_BUCKET_NAME!,
+        Key: path,
+        Body: buffer,
+        ContentType: contentType,
+      }));
+      
+      return { url: `${process.env.R2_PUBLIC_URL}/${path}` };
+    }
+    
+    // Зураг бол WebP болгох
+    const isWebP = contentType === "image/webp" || path.toLowerCase().endsWith('.webp');
+    
+    if (isWebP) {
+      // WebP бол optimize л хийх
+      finalBuffer = await sharp(buffer)
+        .webp({ 
+          quality: 85,
+          effort: 6
+        })
+        .toBuffer();
+      
+      finalPath = path.replace(/\.(jpg|jpeg|png|webp)$/i, '.webp');
+    } else {
+      // PNG/JPG бол WebP болгох
+      finalBuffer = await sharp(buffer)
+        .webp({ 
+          quality: 85,
+          effort: 6
+        })
+        .toBuffer();
+      
+      finalPath = path.replace(/\.(jpg|jpeg|png)$/i, '.webp');
+    }
+    
+    // R2 руу upload
     await r2Client.send(new PutObjectCommand({
       Bucket: process.env.R2_BUCKET_NAME!,
-      Key: path,
-      Body: Buffer.from(fileBuffer),
-      ContentType: contentType,
+      Key: finalPath,
+      Body: finalBuffer,
+      ContentType: "image/webp",
     }));
     
-    return { url: `${process.env.R2_PUBLIC_URL}/${path}` };
+    return { url: `${process.env.R2_PUBLIC_URL}/${finalPath}` };
+    
   } catch (error) {
     console.error("Error uploading to R2:", error);
-    return { error: "Upload failed" };
+    return { 
+      error: error instanceof Error ? error.message : "Upload failed" 
+    };
   }
 }
 
-// Presigned URL upload (for manga images)
+// Presigned URL upload (for manga images) - ХЭВЭЭР ҮЛДЭЭХ
 export async function getPresignedUploadUrl(
   path: string,
   contentType: string,
@@ -64,7 +113,7 @@ export async function getPresignedUploadUrl(
   }
 }
 
-// Delete from R2
+// Delete from R2 - ХЭВЭЭР ҮЛДЭЭХ
 export async function deleteFromR2Server(path: string): Promise<{ error?: string }> {
   try {
     await r2Client.send(

@@ -10,7 +10,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { toast } from "sonner";
 import { createChapter, saveChapterImages } from "./actions";
-import { uploadToR2Server } from "@/app/actions/upload"; // ӨӨРЧЛӨГДСӨН
+import { uploadToR2Server } from "@/app/actions/upload";
 
 type Props = {
   mangaId: string;
@@ -33,20 +33,23 @@ export default function NewChapterForm({ mangaId, mangaTitle }: Props) {
 
       if (!token) {
         toast.error("Authentication required");
+        setLoading(false);
         return;
       }
 
       if (!chapterNumber || chapterNumber < 1) {
         toast.error("Please enter a valid chapter number");
+        setLoading(false);
         return;
       }
 
       if (chapterImages.length === 0) {
         toast.error("Please upload at least one chapter image");
+        setLoading(false);
         return;
       }
 
-      toast.loading("Creating chapter...");
+      const loadingToast = toast.loading("Creating chapter...");
 
       // First create the chapter
       const chapterData = {
@@ -57,14 +60,20 @@ export default function NewChapterForm({ mangaId, mangaTitle }: Props) {
       const createResponse = await createChapter(chapterData, token);
 
       if (createResponse.error) {
+        toast.dismiss(loadingToast);
         toast.error("Failed to create chapter", {
           description: createResponse.message,
         });
+        setLoading(false);
         return;
       }
 
-      // Upload images to R2 - ӨӨРЧЛӨГДСӨН
-      const uploadPromises: Promise<string>[] = [];
+      // Update toast for upload phase
+      toast.dismiss(loadingToast);
+      const uploadToast = toast.loading(`Uploading ${chapterImages.length} images...`);
+
+      // Upload images to R2 with WebP conversion
+      const uploadPromises: Promise<{ index: number; url?: string; error?: string }>[] = [];
       
       for (let i = 0; i < chapterImages.length; i++) {
         const image = chapterImages[i];
@@ -73,21 +82,60 @@ export default function NewChapterForm({ mangaId, mangaTitle }: Props) {
           const cleanFileName = image.file.name.replace(/[^a-zA-Z0-9.-]/g, '_');
           const imagePath = `mangas/${mangaId}/chapters/${chapterNumber}/${timestamp}-page-${i + 1}-${cleanFileName}`;
           
-          const arrayBuffer = await image.file.arrayBuffer();
-          const uploadPromise = uploadToR2Server(arrayBuffer, imagePath, image.file.type)
-            .then(result => {
-              if (result.error || !result.url) throw new Error("Upload failed");
-              return result.url;
-            });
+          // Convert file to ArrayBuffer and upload (Sharp will convert to WebP)
+          const uploadPromise = image.file.arrayBuffer()
+            .then(arrayBuffer => uploadToR2Server(arrayBuffer, imagePath, image.file!.type))
+            .then(result => ({
+              index: i,
+              ...result
+            }))
+            .catch(error => ({
+              index: i,
+              error: error instanceof Error ? error.message : "Upload failed"
+            }));
           
           uploadPromises.push(uploadPromise);
         }
       }
 
       try {
-        const imageUrls = await Promise.all(uploadPromises);
+        const results = await Promise.allSettled(uploadPromises);
+        
+        // Filter successful uploads
+        const successful = results
+          .filter(r => r.status === 'fulfilled' && r.value.url)
+          .map(r => (r as PromiseFulfilledResult<{ index: number; url: string }>).value);
+        
+        // Get failed upload indices
+        const failed = results
+          .map((r, i) => ({ result: r, index: i }))
+          .filter(({ result }) => 
+            result.status === 'rejected' || 
+            (result.status === 'fulfilled' && !result.value.url)
+          )
+          .map(({ index }) => index + 1);
+        
+        toast.dismiss(uploadToast);
 
-        // Save image URLs to chapter
+        if (failed.length > 0 && successful.length === 0) {
+          toast.error("All uploads failed", {
+            description: "Please try again or check your internet connection"
+          });
+          setLoading(false);
+          return;
+        }
+
+        if (failed.length > 0) {
+          toast.warning(`Some uploads failed`, {
+            description: `Failed pages: ${failed.join(', ')}. Successfully uploaded ${successful.length}/${chapterImages.length} pages.`
+          });
+        }
+
+        // Save successful image URLs to chapter
+        const imageUrls = successful
+          .sort((a, b) => a.index - b.index)
+          .map(s => s.url);
+
         const saveImagesResponse = await saveChapterImages(
           {
             mangaId,
@@ -101,17 +149,21 @@ export default function NewChapterForm({ mangaId, mangaTitle }: Props) {
           toast.error("Chapter created but failed to save images", {
             description: saveImagesResponse.message,
           });
+          setLoading(false);
           return;
         }
 
         toast.success("Chapter created successfully", {
-          description: `Chapter ${chapterNumber} with ${chapterImages.length} pages has been added`,
+          description: `Chapter ${chapterNumber} with ${successful.length} pages has been added`,
         });
 
         router.push(`/projects/chapters/${mangaId}`);
       } catch (imageError) {
+        toast.dismiss(uploadToast);
         console.error("Error uploading images:", imageError);
-        toast.error("Chapter created but failed to upload images");
+        toast.error("Chapter created but failed to upload images", {
+          description: "Please try adding images later"
+        });
         router.push(`/projects/chapters/${mangaId}`);
       }
 
@@ -130,6 +182,7 @@ export default function NewChapterForm({ mangaId, mangaTitle }: Props) {
           {/* Header */}
           <div className="bg-zinc-800/50 px-6 py-4 border-b border-zinc-700/50">
             <h1 className="text-2xl font-bold text-white">Шинэ бүлэг</h1>
+            <p className="text-zinc-400 text-sm mt-1">{mangaTitle}</p>
           </div>
 
           {/* Form */}
@@ -148,6 +201,7 @@ export default function NewChapterForm({ mangaId, mangaTitle }: Props) {
                   onChange={(e) => setChapterNumber(parseInt(e.target.value) || 1)}
                   placeholder="Enter chapter number"
                   required
+                  disabled={loading}
                   className="bg-zinc-800/50 border-zinc-600/50 text-white placeholder-zinc-400 focus:border-cyan-400 focus:ring-cyan-400 rounded-lg h-12"
                 />
               </div>
@@ -165,9 +219,16 @@ export default function NewChapterForm({ mangaId, mangaTitle }: Props) {
                   />
                 </div>
                 
-                {/* Display uploaded files with names */}
+                {/* Info message about WebP conversion */}
                 {chapterImages.length > 0 && (
                   <div className="mt-4 space-y-2">
+                    <div className="flex items-start gap-2 bg-cyan-500/10 border border-cyan-500/20 rounded-lg p-3">
+                      <div className="text-cyan-400 text-xs flex-shrink-0 mt-0.5">ℹ️</div>
+                      <div className="text-xs text-cyan-300">
+                        Webp болгож хөрвүүлнэ. 
+                      </div>
+                    </div>
+                    
                     <p className="text-sm text-zinc-400 font-semibold">
                       {chapterImages.length} хуудас нэмэгдлээ:
                     </p>
@@ -182,6 +243,9 @@ export default function NewChapterForm({ mangaId, mangaTitle }: Props) {
                           </span>
                           <span className="text-zinc-300 text-sm truncate">
                             {image.file?.name || 'Unknown'}
+                          </span>
+                          <span className="text-zinc-500 text-xs ml-auto">
+                            {image.file ? `${(image.file.size / (1024 * 1024)).toFixed(2)} MB` : ''}
                           </span>
                         </div>
                       ))}

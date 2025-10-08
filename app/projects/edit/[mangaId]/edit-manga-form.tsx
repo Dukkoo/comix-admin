@@ -12,6 +12,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useState, useEffect } from "react";
 import { toast } from "sonner";
+import { deleteFromR2Server } from "@/app/actions/upload";
 
 interface EditMangaFormProps {
   mangaId: string;
@@ -22,7 +23,15 @@ export default function EditMangaForm({ mangaId }: EditMangaFormProps) {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [initialLoading, setInitialLoading] = useState(true);
-  const [authToken, setAuthToken] = useState<string>(""); // ШИНЭ
+  const [authToken, setAuthToken] = useState<string>("");
+  
+  // ШИНЭ: Original images хадгалах (delete-д хэрэгтэй)
+  const [originalImages, setOriginalImages] = useState({
+    mangaImage: "",
+    coverImage: "",
+    avatarImage: "",
+  });
+  
   const [formData, setFormData] = useState({
     title: "",
     type: "",
@@ -45,7 +54,7 @@ export default function EditMangaForm({ mangaId }: EditMangaFormProps) {
     }
 
     try {
-      // ШИНЭ: Get auth token
+      // Get auth token
       const token = await auth?.currentUser?.getIdToken();
       if (token) {
         setAuthToken(token);
@@ -62,7 +71,7 @@ export default function EditMangaForm({ mangaId }: EditMangaFormProps) {
       const result = await response.json();
       
       if (result.data) {
-        setFormData({
+        const mangaData = {
           title: result.data.title || "",
           type: result.data.type || "",
           status: result.data.status || "ongoing",
@@ -70,7 +79,17 @@ export default function EditMangaForm({ mangaId }: EditMangaFormProps) {
           mangaImage: result.data.mangaImage || "",
           coverImage: result.data.coverImage || "",
           avatarImage: result.data.avatarImage || "",
+        };
+        
+        setFormData(mangaData);
+        
+        // ШИНЭ: Original images хадгалах
+        setOriginalImages({
+          mangaImage: result.data.mangaImage || "",
+          coverImage: result.data.coverImage || "",
+          avatarImage: result.data.avatarImage || "",
         });
+        
         toast.success("Manga loaded successfully");
       } else {
         toast.error("No manga data found");
@@ -105,9 +124,13 @@ export default function EditMangaForm({ mangaId }: EditMangaFormProps) {
       const token = await auth?.currentUser?.getIdToken();
       if (!token) {
         toast.error("Authentication required");
+        setLoading(false);
         return;
       }
 
+      const loadingToast = toast.loading("Updating manga...");
+
+      // Update manga in Firestore
       const response = await fetch(`/api/mangas/${mangaId}`, {
         method: 'PUT',
         headers: {
@@ -120,14 +143,78 @@ export default function EditMangaForm({ mangaId }: EditMangaFormProps) {
       const result = await response.json();
 
       if (result.error) {
+        toast.dismiss(loadingToast);
         toast.error("Failed to update manga", {
           description: result.message,
         });
+        setLoading(false);
         return;
       }
 
-      toast.success("Manga updated successfully");
+      // ШИНЭ: Delete old images from R2 if they changed
+      const imagesToDelete: { type: string; url: string; path: string }[] = [];
+      
+      // Check each image type
+      const imageTypes: Array<"mangaImage" | "coverImage" | "avatarImage"> = [
+        "mangaImage", 
+        "coverImage", 
+        "avatarImage"
+      ];
+      
+      for (const imageType of imageTypes) {
+        const originalUrl = originalImages[imageType];
+        const newUrl = formData[imageType];
+        
+        // If image changed and original exists
+        if (originalUrl && newUrl && originalUrl !== newUrl) {
+          try {
+            let path: string;
+            
+            // Handle both absolute and relative URLs
+            if (originalUrl.startsWith('http')) {
+              const urlObj = new URL(originalUrl);
+              path = urlObj.pathname.substring(1); // Remove leading "/"
+            } else {
+              path = originalUrl.startsWith('/') ? originalUrl.substring(1) : originalUrl;
+            }
+            
+            imagesToDelete.push({ type: imageType, url: originalUrl, path });
+          } catch (error) {
+            console.error(`Failed to parse URL for ${imageType}:`, originalUrl, error);
+          }
+        }
+      }
+
+      // Delete old images
+      if (imagesToDelete.length > 0) {
+        toast.dismiss(loadingToast);
+        const deleteToast = toast.loading(`Deleting ${imagesToDelete.length} old images...`);
+        
+        const deleteResults = await Promise.allSettled(
+          imagesToDelete.map(({ path }) => deleteFromR2Server(path))
+        );
+        
+        const failedDeletes = deleteResults.filter(r => r.status === 'rejected').length;
+        
+        toast.dismiss(deleteToast);
+        
+        if (failedDeletes > 0) {
+          toast.warning(`${failedDeletes} old images couldn't be deleted`, {
+            description: "They won't affect your manga but may use storage space"
+          });
+        }
+      } else {
+        toast.dismiss(loadingToast);
+      }
+
+      toast.success("Manga updated successfully", {
+        description: imagesToDelete.length > 0 
+          ? `Updated and removed ${imagesToDelete.length} old images`
+          : "All changes saved"
+      });
+      
       router.push("/projects");
+      
     } catch (error) {
       console.error("Error updating manga:", error);
       toast.error("An unexpected error occurred");
@@ -140,7 +227,7 @@ export default function EditMangaForm({ mangaId }: EditMangaFormProps) {
     return (
       <div className="min-h-screen bg-zinc-900 p-6 flex items-center justify-center">
         <div className="text-center">
-          <span className="loader"></span>
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-white mx-auto"></div>
           <p className="text-white mt-6">Зурагт номын мэдээллийг уншиж байна</p>
         </div>
       </div>
@@ -154,6 +241,7 @@ export default function EditMangaForm({ mangaId }: EditMangaFormProps) {
           <div className="flex items-center justify-between mb-6">
             <div>
               <h1 className="text-2xl font-bold text-white">Зурагт ном засварлах</h1>
+              <p className="text-zinc-400 text-sm mt-1">{formData.title}</p>
             </div>
             <Link 
               href="/projects"
@@ -165,6 +253,7 @@ export default function EditMangaForm({ mangaId }: EditMangaFormProps) {
           </div>
 
           <form onSubmit={handleSubmit} className="space-y-6">
+            {/* Title */}
             <div className="space-y-2">
               <Label htmlFor="title" className="text-zinc-300">Нэр</Label>
               <Input
@@ -173,13 +262,19 @@ export default function EditMangaForm({ mangaId }: EditMangaFormProps) {
                 value={formData.title}
                 onChange={handleInputChange}
                 required
+                disabled={loading}
                 className="bg-zinc-800/50 border-zinc-600/50 text-white"
               />
             </div>
 
+            {/* Type */}
             <div className="space-y-2">
               <Label className="text-zinc-300">Төрөл</Label>
-              <Select value={formData.type} onValueChange={(value) => handleSelectChange("type", value)}>
+              <Select 
+                value={formData.type} 
+                onValueChange={(value) => handleSelectChange("type", value)}
+                disabled={loading}
+              >
                 <SelectTrigger className="bg-zinc-800/50 border-zinc-600/50 text-white cursor-pointer">
                   <SelectValue placeholder="Select type" />
                 </SelectTrigger>
@@ -193,9 +288,14 @@ export default function EditMangaForm({ mangaId }: EditMangaFormProps) {
               </Select>
             </div>
 
+            {/* Status */}
             <div className="space-y-2">
               <Label className="text-zinc-300">Төлөв</Label>
-              <Select value={formData.status} onValueChange={(value) => handleSelectChange("status", value as "ongoing" | "finished")}>
+              <Select 
+                value={formData.status} 
+                onValueChange={(value) => handleSelectChange("status", value as "ongoing" | "finished")}
+                disabled={loading}
+              >
                 <SelectTrigger className="bg-zinc-800/50 border-zinc-600/50 text-white cursor-pointer">
                   <SelectValue />
                 </SelectTrigger>
@@ -206,6 +306,7 @@ export default function EditMangaForm({ mangaId }: EditMangaFormProps) {
               </Select>
             </div>
 
+            {/* Description */}
             <div className="space-y-2">
               <Label htmlFor="description" className="text-zinc-300">Товч тайлбар</Label>
               <Textarea
@@ -214,56 +315,75 @@ export default function EditMangaForm({ mangaId }: EditMangaFormProps) {
                 value={formData.description}
                 onChange={handleInputChange}
                 rows={4}
+                disabled={loading}
                 className="bg-zinc-800/50 border-zinc-600/50 text-white"
               />
             </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-              <div className="space-y-2">
-                <Label className="text-zinc-300">Нүүр зураг</Label>
-                <MangaImageUploader
-                  currentImageUrl={formData.mangaImage}
-                  onImageChange={(url) => handleImageChange("mangaImage", url)}
-                  mangaId={mangaId}
-                  imageType="mangaImage"
-                  label="Зураг оруулах"
-                  authToken={authToken}
-                />
-              </div>
+            {/* Images */}
+            <div className="space-y-4">
+              <Label className="text-zinc-300">Зургууд</Label>
+              
+              {/* Info message */}
+              {(formData.mangaImage !== originalImages.mangaImage || 
+                formData.coverImage !== originalImages.coverImage || 
+                formData.avatarImage !== originalImages.avatarImage) && (
+                <div className="flex items-start gap-2 bg-cyan-500/10 border border-cyan-500/20 rounded-lg p-3">
+                  <div className="text-cyan-400 text-xs flex-shrink-0 mt-0.5">ℹ️</div>
+                  <div className="text-xs text-cyan-300">
+                    Old images will be automatically deleted from storage when you save.
+                  </div>
+                </div>
+              )}
+              
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                <div className="space-y-2">
+                  <Label className="text-zinc-300 text-sm">Нүүр зураг</Label>
+                  <MangaImageUploader
+                    currentImageUrl={formData.mangaImage}
+                    onImageChange={(url) => handleImageChange("mangaImage", url)}
+                    mangaId={mangaId}
+                    imageType="mangaImage"
+                    label="Зураг оруулах"
+                    authToken={authToken}
+                  />
+                </div>
 
-              <div className="space-y-2">
-                <Label className="text-zinc-300">Арын зураг</Label>
-                <MangaImageUploader
-                  currentImageUrl={formData.coverImage}
-                  onImageChange={(url) => handleImageChange("coverImage", url)}
-                  mangaId={mangaId}
-                  imageType="coverImage"
-                  label="Зураг оруулах"
-                  authToken={authToken}
-                />
-              </div>
+                <div className="space-y-2">
+                  <Label className="text-zinc-300 text-sm">Арын зураг</Label>
+                  <MangaImageUploader
+                    currentImageUrl={formData.coverImage}
+                    onImageChange={(url) => handleImageChange("coverImage", url)}
+                    mangaId={mangaId}
+                    imageType="coverImage"
+                    label="Зураг оруулах"
+                    authToken={authToken}
+                  />
+                </div>
 
-              <div className="space-y-2">
-                <Label className="text-zinc-300">Аватар зураг</Label>
-                <MangaImageUploader
-                  currentImageUrl={formData.avatarImage}
-                  onImageChange={(url) => handleImageChange("avatarImage", url)}
-                  mangaId={mangaId}
-                  imageType="avatarImage"
-                  label="Зураг оруулах"
-                  authToken={authToken}
-                />
+                <div className="space-y-2">
+                  <Label className="text-zinc-300 text-sm">Аватар зураг</Label>
+                  <MangaImageUploader
+                    currentImageUrl={formData.avatarImage}
+                    onImageChange={(url) => handleImageChange("avatarImage", url)}
+                    mangaId={mangaId}
+                    imageType="avatarImage"
+                    label="Зураг оруулах"
+                    authToken={authToken}
+                  />
+                </div>
               </div>
             </div>
 
+            {/* Submit Button */}
             <Button
               type="submit"
               disabled={loading || !formData.title || !formData.type}
-              className="w-full bg-cyan-600 hover:bg-cyan-700 text-white cursor-pointer"
+              className="w-full bg-cyan-600 hover:bg-cyan-700 text-white cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {loading ? (
                 <div className="flex items-center justify-center">
-                  <span className="loader" style={{ width: '24px', height: '24px', marginRight: '8px' }}></span>
+                  <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white mr-2"></div>
                   <span>Хадгалж байна...</span>
                 </div>
               ) : (
