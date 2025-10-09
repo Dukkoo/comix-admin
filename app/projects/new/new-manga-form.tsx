@@ -1,3 +1,4 @@
+// app/projects/new/new-manga-form.tsx
 "use client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -10,7 +11,7 @@ import { useRouter } from "next/navigation";
 import { useState, useRef } from "react";
 import { toast } from "sonner";
 import { createManga } from "@/utils/manga-api";
-import { getPresignedUploadUrl } from "@/app/actions/upload";
+import { uploadToR2Server } from "@/app/actions/upload";
 import Image from "next/image";
 
 export default function NewMangaForm() {
@@ -101,27 +102,14 @@ export default function NewMangaForm() {
         const cleanFileName = file.name.replace(/[^a-zA-Z0-9.-]/g, "_");
         const path = `mangas/${mangaId}/${folder}/${timestamp}-${cleanFileName}`;
 
-        const { presignedUrl, publicUrl, error } = await getPresignedUploadUrl(
-          path,
-          file.type,
-          token
-        );
+        const arrayBuffer = await file.arrayBuffer();
+        const result = await uploadToR2Server(arrayBuffer, path, file.type);
 
-        if (error || !presignedUrl || !publicUrl) {
-          throw new Error("Failed to get upload URL");
-        }
-
-        const uploadResponse = await fetch(presignedUrl, {
-          method: "PUT",
-          body: file,
-          headers: { "Content-Type": file.type },
-        });
-
-        if (!uploadResponse.ok) {
+        if (result.error || !result.url) {
           throw new Error("Failed to upload image");
         }
 
-        return publicUrl;
+        return result.url;
       };
 
       toast.loading("Uploading images...");
@@ -150,18 +138,22 @@ export default function NewMangaForm() {
       const response = await createManga(mangaData, token);
 
       if (response.error) {
+        toast.dismiss();
         toast.error("Failed to create manga", {
           description: response.message,
         });
+        setLoading(false);
         return;
       }
 
+      toast.dismiss();
       toast.success("Зурагт ном үүсгэгдлээ", {
         description: `"${formData.title}" has been added to your collection`,
       });
 
       router.push("/projects");
     } catch (error) {
+      toast.dismiss();
       console.error("Error creating manga:", error);
       toast.error("An unexpected error occurred");
     } finally {
@@ -265,6 +257,7 @@ export default function NewMangaForm() {
                 onChange={handleInputChange}
                 placeholder="Зурагт номын нэр"
                 required
+                disabled={loading}
                 className="bg-zinc-800/50 border-zinc-600/50 text-white placeholder-zinc-400 focus:border-cyan-400 focus:ring-cyan-400 rounded-lg h-12"
               />
             </div>
@@ -274,7 +267,7 @@ export default function NewMangaForm() {
                 <Label htmlFor="type" className="text-sm font-semibold text-zinc-300 uppercase tracking-wider">
                   Төрөл
                 </Label>
-                <Select value={formData.type} onValueChange={(value) => handleSelectChange("type", value)}>
+                <Select value={formData.type} onValueChange={(value) => handleSelectChange("type", value)} disabled={loading}>
                   <SelectTrigger className="bg-zinc-800/50 border-zinc-600/50 text-white focus:border-cyan-400 focus:ring-cyan-400 rounded-lg h-12 cursor-pointer">
                     <SelectValue placeholder="Зурагт номын төрлөө сонгоно уу" />
                   </SelectTrigger>
@@ -292,7 +285,7 @@ export default function NewMangaForm() {
                 <Label htmlFor="status" className="text-sm font-semibold text-zinc-300 uppercase tracking-wider">
                   Төлөв
                 </Label>
-                <Select value={formData.status} onValueChange={(value) => handleSelectChange("status", value)}>
+                <Select value={formData.status} onValueChange={(value) => handleSelectChange("status", value)} disabled={loading}>
                   <SelectTrigger className="bg-zinc-800/50 border-zinc-600/50 text-white focus:border-cyan-400 focus:ring-cyan-400 rounded-lg h-12 cursor-pointer">
                     <SelectValue placeholder="Select status" />
                   </SelectTrigger>
@@ -342,6 +335,7 @@ export default function NewMangaForm() {
                 onChange={handleInputChange}
                 placeholder="Энд товч тайлбараа бичнэ үү"
                 rows={4}
+                disabled={loading}
                 className="bg-zinc-800/50 border-zinc-600/50 text-white placeholder-zinc-400 focus:border-cyan-400 focus:ring-cyan-400 rounded-lg min-h-[120px] resize-none"
               />
             </div>
