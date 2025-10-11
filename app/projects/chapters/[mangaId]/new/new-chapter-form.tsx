@@ -10,44 +10,12 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { toast } from "sonner";
 import { createChapter, saveChapterImages } from "./actions";
-import { getPresignedUploadUrl } from "@/app/actions/upload";
+import { uploadToR2Server } from "@/app/actions/upload";
 
 type Props = {
   mangaId: string;
   mangaTitle: string;
 };
-
-// Browser дээр WebP болгох (WebP биш зураг бол)
-async function convertToWebPIfNeeded(file: File): Promise<Blob> {
-  // WebP файл бол шууд буцаах
-  if (file.type === 'image/webp' || file.name.toLowerCase().endsWith('.webp')) {
-    return file;
-  }
-  
-  // PNG/JPG бол WebP болгох
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    img.onload = () => {
-      const canvas = document.createElement('canvas');
-      canvas.width = img.width;
-      canvas.height = img.height;
-      
-      const ctx = canvas.getContext('2d')!;
-      ctx.drawImage(img, 0, 0);
-      
-      canvas.toBlob(
-        (blob) => {
-          if (blob) resolve(blob);
-          else reject(new Error('WebP conversion failed'));
-        },
-        'image/webp',
-        1.0 // 100% quality - lossless
-      );
-    };
-    img.onerror = () => reject(new Error('Failed to load image'));
-    img.src = URL.createObjectURL(file);
-  });
-}
 
 export default function NewChapterForm({ mangaId, mangaTitle }: Props) {
   const auth = useAuth();
@@ -104,53 +72,31 @@ export default function NewChapterForm({ mangaId, mangaTitle }: Props) {
       toast.dismiss(loadingToast);
       const uploadToast = toast.loading(`Uploading ${chapterImages.length} images...`);
 
-      // Upload images directly to R2 with browser-side WebP conversion
-      const uploadPromises = chapterImages.map(async (image, i) => {
-        if (!image.file) return { index: i, error: "No file" };
-        
-        try {
+      // Upload images to R2 with WebP conversion
+      const uploadPromises: Promise<{ index: number; url?: string; error?: string }>[] = [];
+      
+      for (let i = 0; i < chapterImages.length; i++) {
+        const image = chapterImages[i];
+        if (image.file) {
           const timestamp = Date.now();
           const cleanFileName = image.file.name.replace(/[^a-zA-Z0-9.-]/g, '_');
-          // WebP extension-тэй файлын нэр
-          const imagePath = `mangas/${mangaId}/chapters/${chapterNumber}/${timestamp}-page-${i + 1}-${cleanFileName.replace(/\.(jpg|jpeg|png|webp)$/i, '.webp')}`;
+          const imagePath = `mangas/${mangaId}/chapters/${chapterNumber}/${timestamp}-page-${i + 1}-${cleanFileName}`;
           
-          // 1. Get presigned URL from server
-          const { presignedUrl, publicUrl, error } = await getPresignedUploadUrl(
-            imagePath,
-            'image/webp',
-            token!
-          );
+          // Convert file to ArrayBuffer and upload (Sharp will convert to WebP)
+          const uploadPromise = image.file.arrayBuffer()
+            .then(arrayBuffer => uploadToR2Server(arrayBuffer, imagePath, image.file!.type))
+            .then(result => ({
+              index: i,
+              ...result
+            }))
+            .catch(error => ({
+              index: i,
+              error: error instanceof Error ? error.message : "Upload failed"
+            }));
           
-          if (error || !presignedUrl || !publicUrl) {
-            return { index: i, error: error || "Failed to get upload URL" };
-          }
-          
-          // 2. Convert to WebP if needed (browser-side)
-          const webpBlob = await convertToWebPIfNeeded(image.file);
-          
-          // 3. Upload directly to R2 (bypass Vercel)
-          const uploadResponse = await fetch(presignedUrl, {
-            method: 'PUT',
-            body: webpBlob,
-            headers: {
-              'Content-Type': 'image/webp',
-            },
-          });
-          
-          if (!uploadResponse.ok) {
-            return { index: i, error: `Upload failed: ${uploadResponse.status}` };
-          }
-          
-          return { index: i, url: publicUrl };
-          
-        } catch (error) {
-          console.error(`Error uploading image ${i}:`, error);
-          return { 
-            index: i, 
-            error: error instanceof Error ? error.message : "Unknown error" 
-          };
+          uploadPromises.push(uploadPromise);
         }
-      });
+      }
 
       try {
         const results = await Promise.allSettled(uploadPromises);
@@ -279,7 +225,7 @@ export default function NewChapterForm({ mangaId, mangaTitle }: Props) {
                     <div className="flex items-start gap-2 bg-cyan-500/10 border border-cyan-500/20 rounded-lg p-3">
                       <div className="text-cyan-400 text-xs flex-shrink-0 mt-0.5">ℹ️</div>
                       <div className="text-xs text-cyan-300">
-                        WebP биш зургууд автоматаар WebP болгогдоно. WebP файлууд хэвээрээ үлдэнэ.
+                        Webp болгож хөрвүүлнэ. 
                       </div>
                     </div>
                     
@@ -287,29 +233,22 @@ export default function NewChapterForm({ mangaId, mangaTitle }: Props) {
                       {chapterImages.length} хуудас нэмэгдлээ:
                     </p>
                     <div className="space-y-1 max-h-60 overflow-y-auto">
-                      {chapterImages.map((image, index) => {
-                        const isWebP = image.file?.type === 'image/webp' || 
-                                      image.file?.name.toLowerCase().endsWith('.webp');
-                        return (
-                          <div 
-                            key={index} 
-                            className="flex items-center gap-2 bg-zinc-800/50 rounded-lg p-2 border border-zinc-700/30"
-                          >
-                            <span className="text-cyan-400 font-semibold min-w-[60px]">
-                              Хуудас {index + 1}:
-                            </span>
-                            <span className="text-zinc-300 text-sm truncate">
-                              {image.file?.name || 'Unknown'}
-                            </span>
-                            {isWebP && (
-                              <span className="text-green-400 text-xs">✓ WebP</span>
-                            )}
-                            <span className="text-zinc-500 text-xs ml-auto">
-                              {image.file ? `${(image.file.size / (1024 * 1024)).toFixed(2)} MB` : ''}
-                            </span>
-                          </div>
-                        );
-                      })}
+                      {chapterImages.map((image, index) => (
+                        <div 
+                          key={index} 
+                          className="flex items-center gap-2 bg-zinc-800/50 rounded-lg p-2 border border-zinc-700/30"
+                        >
+                          <span className="text-cyan-400 font-semibold min-w-[60px]">
+                            Хуудас {index + 1}:
+                          </span>
+                          <span className="text-zinc-300 text-sm truncate">
+                            {image.file?.name || 'Unknown'}
+                          </span>
+                          <span className="text-zinc-500 text-xs ml-auto">
+                            {image.file ? `${(image.file.size / (1024 * 1024)).toFixed(2)} MB` : ''}
+                          </span>
+                        </div>
+                      ))}
                     </div>
                   </div>
                 )}
