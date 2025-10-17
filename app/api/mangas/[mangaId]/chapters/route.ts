@@ -22,12 +22,20 @@ export async function GET(
     const totalCount = totalSnapshot.size;
     const totalPages = Math.ceil(totalCount / pageSize);
 
-    const offset = (page - 1) * pageSize;
-    const snapshot = await chaptersRef
-      .orderBy("chapterNumber", "desc")
-      .limit(pageSize)
-      .offset(offset)
-      .get();
+    // If pageSize is very large (like 9999), just get all chapters without pagination
+    let snapshot;
+    if (pageSize >= 1000) {
+      snapshot = await chaptersRef
+        .orderBy("chapterNumber", "desc")
+        .get();
+    } else {
+      const offset = (page - 1) * pageSize;
+      snapshot = await chaptersRef
+        .orderBy("chapterNumber", "desc")
+        .limit(pageSize)
+        .offset(offset)
+        .get();
+    }
     
     const chapters: any[] = [];
     snapshot.forEach((doc) => {

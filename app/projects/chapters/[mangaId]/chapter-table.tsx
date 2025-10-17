@@ -48,7 +48,8 @@ export default function ChapterTable({
   useEffect(() => {
     const loadChapters = async () => {
       try {
-        const result = await fetchChapters(mangaId, page, 10);
+        // Fetch all chapters without pagination (set pageSize to 9999)
+        const result = await fetchChapters(mangaId, 1, 9999);
         // Sort chapters by chapter number descending (latest first)
         const sortedChapters = (result.data || []).sort((a, b) => b.chapterNumber - a.chapterNumber);
         setChapters(sortedChapters);
@@ -62,7 +63,7 @@ export default function ChapterTable({
     };
 
     loadChapters();
-  }, [mangaId, page]);
+  }, [mangaId]);
 
   // Filter chapters based on search query
   useEffect(() => {
