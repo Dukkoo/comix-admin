@@ -12,7 +12,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useState, useEffect } from "react";
 import { toast } from "sonner";
-import { deleteFromR2Server } from "@/app/actions/upload";
+import { deleteFromR2Server, uploadToR2Server } from "@/app/actions/upload";
 
 interface EditMangaFormProps {
   mangaId: string;
@@ -25,11 +25,18 @@ export default function EditMangaForm({ mangaId }: EditMangaFormProps) {
   const [initialLoading, setInitialLoading] = useState(true);
   const [authToken, setAuthToken] = useState<string>("");
   
-  // ШИНЭ: Original images хадгалах (delete-д хэрэгтэй)
+  // Original images for deletion
   const [originalImages, setOriginalImages] = useState({
     mangaImage: "",
     coverImage: "",
     avatarImage: "",
+  });
+  
+  // New image files (if user uploads new ones)
+  const [imageFiles, setImageFiles] = useState({
+    mangaImage: null as File | null,
+    coverImage: null as File | null,
+    avatarImage: null as File | null,
   });
   
   const [formData, setFormData] = useState({
@@ -54,7 +61,6 @@ export default function EditMangaForm({ mangaId }: EditMangaFormProps) {
     }
 
     try {
-      // Get auth token
       const token = await auth?.currentUser?.getIdToken();
       if (token) {
         setAuthToken(token);
@@ -82,8 +88,6 @@ export default function EditMangaForm({ mangaId }: EditMangaFormProps) {
         };
         
         setFormData(mangaData);
-        
-        // ШИНЭ: Original images хадгалах
         setOriginalImages({
           mangaImage: result.data.mangaImage || "",
           coverImage: result.data.coverImage || "",
@@ -116,6 +120,10 @@ export default function EditMangaForm({ mangaId }: EditMangaFormProps) {
     setFormData(prev => ({ ...prev, [type]: url }));
   };
 
+  const handleFileChange = (type: "mangaImage" | "coverImage" | "avatarImage", file: File | null) => {
+    setImageFiles(prev => ({ ...prev, [type]: file }));
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
@@ -128,16 +136,88 @@ export default function EditMangaForm({ mangaId }: EditMangaFormProps) {
         return;
       }
 
-      const loadingToast = toast.loading("Updating manga...");
+      let loadingToast = toast.loading("Processing images...");
+
+      // Upload new images if any
+      const uploadedUrls: { [key: string]: string } = {};
+      const imagesToDelete: { type: string; url: string; path: string }[] = [];
+
+      const imageTypes: Array<"mangaImage" | "coverImage" | "avatarImage"> = [
+        "mangaImage", 
+        "coverImage", 
+        "avatarImage"
+      ];
+
+      for (const imageType of imageTypes) {
+        const file = imageFiles[imageType];
+        const originalUrl = originalImages[imageType];
+        
+        if (file) {
+          // User uploaded a new image
+          toast.dismiss(loadingToast);
+          loadingToast = toast.loading(`Uploading ${imageType}...`);
+
+          const folderMap = {
+            "coverImage": "cover",
+            "mangaImage": "manga",
+            "avatarImage": "avatar"
+          };
+          
+          const timestamp = Date.now();
+          const cleanFileName = file.name.replace(/[^a-zA-Z0-9.-]/g, "_");
+          const folder = folderMap[imageType];
+          const path = `mangas/${mangaId}/${folder}/${timestamp}-${cleanFileName}`;
+
+          const arrayBuffer = await file.arrayBuffer();
+          const result = await uploadToR2Server(arrayBuffer, path, file.type);
+
+          if (result.error || !result.url) {
+            throw new Error(`Failed to upload ${imageType}`);
+          }
+
+          uploadedUrls[imageType] = result.url;
+
+          // Mark old image for deletion if it exists
+          if (originalUrl) {
+            try {
+              let deletePath: string;
+              
+              if (originalUrl.startsWith('http')) {
+                const urlObj = new URL(originalUrl);
+                deletePath = urlObj.pathname.substring(1);
+              } else {
+                deletePath = originalUrl.startsWith('/') ? originalUrl.substring(1) : originalUrl;
+              }
+              
+              imagesToDelete.push({ type: imageType, url: originalUrl, path: deletePath });
+            } catch (error) {
+              console.error(`Failed to parse URL for ${imageType}:`, originalUrl, error);
+            }
+          }
+        } else {
+          // Keep existing image
+          uploadedUrls[imageType] = formData[imageType];
+        }
+      }
+
+      toast.dismiss(loadingToast);
+      loadingToast = toast.loading("Updating manga...");
 
       // Update manga in Firestore
+      const updatedFormData = {
+        ...formData,
+        mangaImage: uploadedUrls.mangaImage || formData.mangaImage,
+        coverImage: uploadedUrls.coverImage || formData.coverImage,
+        avatarImage: uploadedUrls.avatarImage || formData.avatarImage,
+      };
+
       const response = await fetch(`/api/mangas/${mangaId}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`,
         },
-        body: JSON.stringify(formData),
+        body: JSON.stringify(updatedFormData),
       });
 
       const result = await response.json();
@@ -151,41 +231,7 @@ export default function EditMangaForm({ mangaId }: EditMangaFormProps) {
         return;
       }
 
-      // ШИНЭ: Delete old images from R2 if they changed
-      const imagesToDelete: { type: string; url: string; path: string }[] = [];
-      
-      // Check each image type
-      const imageTypes: Array<"mangaImage" | "coverImage" | "avatarImage"> = [
-        "mangaImage", 
-        "coverImage", 
-        "avatarImage"
-      ];
-      
-      for (const imageType of imageTypes) {
-        const originalUrl = originalImages[imageType];
-        const newUrl = formData[imageType];
-        
-        // If image changed and original exists
-        if (originalUrl && newUrl && originalUrl !== newUrl) {
-          try {
-            let path: string;
-            
-            // Handle both absolute and relative URLs
-            if (originalUrl.startsWith('http')) {
-              const urlObj = new URL(originalUrl);
-              path = urlObj.pathname.substring(1); // Remove leading "/"
-            } else {
-              path = originalUrl.startsWith('/') ? originalUrl.substring(1) : originalUrl;
-            }
-            
-            imagesToDelete.push({ type: imageType, url: originalUrl, path });
-          } catch (error) {
-            console.error(`Failed to parse URL for ${imageType}:`, originalUrl, error);
-          }
-        }
-      }
-
-      // Delete old images
+      // Delete old images from R2
       if (imagesToDelete.length > 0) {
         toast.dismiss(loadingToast);
         const deleteToast = toast.loading(`Deleting ${imagesToDelete.length} old images...`);
@@ -325,9 +371,7 @@ export default function EditMangaForm({ mangaId }: EditMangaFormProps) {
               <Label className="text-zinc-300">Зургууд</Label>
               
               {/* Info message */}
-              {(formData.mangaImage !== originalImages.mangaImage || 
-                formData.coverImage !== originalImages.coverImage || 
-                formData.avatarImage !== originalImages.avatarImage) && (
+              {(imageFiles.mangaImage || imageFiles.coverImage || imageFiles.avatarImage) && (
                 <div className="flex items-start gap-2 bg-cyan-500/10 border border-cyan-500/20 rounded-lg p-3">
                   <div className="text-cyan-400 text-xs flex-shrink-0 mt-0.5">ℹ️</div>
                   <div className="text-xs text-cyan-300">
@@ -342,6 +386,7 @@ export default function EditMangaForm({ mangaId }: EditMangaFormProps) {
                   <MangaImageUploader
                     currentImageUrl={formData.mangaImage}
                     onImageChange={(url) => handleImageChange("mangaImage", url)}
+                    onFileChange={(file) => handleFileChange("mangaImage", file)}
                     mangaId={mangaId}
                     imageType="mangaImage"
                     label="Зураг оруулах"
@@ -354,6 +399,7 @@ export default function EditMangaForm({ mangaId }: EditMangaFormProps) {
                   <MangaImageUploader
                     currentImageUrl={formData.coverImage}
                     onImageChange={(url) => handleImageChange("coverImage", url)}
+                    onFileChange={(file) => handleFileChange("coverImage", file)}
                     mangaId={mangaId}
                     imageType="coverImage"
                     label="Зураг оруулах"
@@ -366,6 +412,7 @@ export default function EditMangaForm({ mangaId }: EditMangaFormProps) {
                   <MangaImageUploader
                     currentImageUrl={formData.avatarImage}
                     onImageChange={(url) => handleImageChange("avatarImage", url)}
+                    onFileChange={(file) => handleFileChange("avatarImage", file)}
                     mangaId={mangaId}
                     imageType="avatarImage"
                     label="Зураг оруулах"
