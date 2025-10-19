@@ -108,6 +108,11 @@ export default function AdminUsersPage() {
   }, [filterStatus]);
 
   const handleSearch = () => {
+    // Validate if searching by userId (should be exactly 5 digits)
+    if (searchTerm.trim() && !/^\d{5}$/.test(searchTerm.trim())) {
+      toast.warning("ID нь яг 5 оронтой тоо байх ёстой");
+      return;
+    }
     setCurrentPage(1);
     fetchUsers(1, searchTerm, filterStatus);
   };

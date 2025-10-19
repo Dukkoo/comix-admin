@@ -1,83 +1,100 @@
-// app/api/user/subscription-status/route.ts
 import { auth, firestore } from "@/firebase/server";
 import { NextRequest, NextResponse } from "next/server";
 
 export async function GET(request: NextRequest) {
   try {
-    // Get auth token from headers
+    // Verify admin authentication
     const authHeader = request.headers.get("authorization");
     if (!authHeader?.startsWith("Bearer ")) {
-      return NextResponse.json(
-        { error: "Unauthorized" },
-        { status: 401 }
-      );
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
     const token = authHeader.split(" ")[1];
     const verifiedToken = await auth.verifyIdToken(token);
-    const userId = verifiedToken.uid;
 
-    // Get user document from Firestore
-    const userDocRef = firestore.collection("users").doc(userId);
-    const userDoc = await userDocRef.get();
+    const searchParams = request.nextUrl.searchParams;
+    const page = parseInt(searchParams.get("page") || "1");
+    const limit = parseInt(searchParams.get("limit") || "25");
+    const search = searchParams.get("search") || "";
+    const status = searchParams.get("status") || "all";
 
-    if (!userDoc.exists) {
-      // Create a default user document if it doesn't exist
-      await userDocRef.set({
-        email: verifiedToken.email || '',
-        subscriptionStatus: "not_subscribed",
-        xp: 0,
-        createdAt: new Date(),
-      });
+    const usersRef = firestore.collection("users");
+    let snapshot;
 
-      return NextResponse.json({
-        isSubscribed: false,
-        subscriptionStatus: "not_subscribed",
-        subscriptionDaysLeft: 0,
-        subscriptionEndDate: null,
-        xp: 0,
-      });
-    }
-
-    const userData = userDoc.data();
-    let isSubscribed = false;
-    let subscriptionDaysLeft = 0;
-    let subscriptionEndDate = userData?.subscriptionEndDate || null;
-    const userXP = userData?.xp || 0; // Get XP from Firestore
-
-    // Check if user has an active subscription
-    if (userData?.subscriptionStatus === "subscribed" && userData?.subscriptionEndDate) {
-      const endDate = new Date(userData.subscriptionEndDate);
-      const now = new Date();
-      const diffTime = endDate.getTime() - now.getTime();
-      const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-
-      if (diffTime > 0) {
-        // Subscription is still active
-        isSubscribed = true;
-        subscriptionDaysLeft = diffDays;
+    // Build query based on search and status
+    if (search && search.trim() && /^\d{5}$/.test(search.trim())) {
+      // Search by 5-digit userId
+      const userIdNumber = parseInt(search.trim());
+      
+      if (status !== "all") {
+        // Both filters
+        snapshot = await usersRef
+          .where("userId", "==", userIdNumber)
+          .where("subscriptionStatus", "==", status)
+          .get();
       } else {
-        // Subscription has expired - update the status
-        await userDocRef.update({
-          subscriptionStatus: "not_subscribed",
-          updatedAt: new Date(),
-        });
-        subscriptionEndDate = null;
+        // Only userId filter
+        snapshot = await usersRef
+          .where("userId", "==", userIdNumber)
+          .get();
+      }
+    } else {
+      // No userId search
+      if (status !== "all") {
+        // Only status filter
+        snapshot = await usersRef
+          .where("subscriptionStatus", "==", status)
+          .get();
+      } else {
+        // No filters
+        snapshot = await usersRef.get();
       }
     }
 
+    // Calculate pagination
+    const totalCount = snapshot.size;
+    const totalPages = Math.ceil(totalCount / limit);
+    const offset = (page - 1) * limit;
+
+    // Apply pagination and map data
+    const users = snapshot.docs
+      .slice(offset, offset + limit)
+      .map(doc => {
+        const data = doc.data();
+        let subscriptionDaysLeft;
+        
+        if (data.subscriptionStatus === "subscribed" && data.subscriptionEndDate) {
+          const endDate = new Date(data.subscriptionEndDate);
+          const now = new Date();
+          const diffTime = endDate.getTime() - now.getTime();
+          subscriptionDaysLeft = Math.max(0, Math.ceil(diffTime / (1000 * 60 * 60 * 24)));
+        }
+
+        return {
+          id: doc.id,
+          userId: data.userId,
+          username: data.displayName || data.name || data.email?.split('@')[0] || 'Unknown',
+          email: data.email || '',
+          xp: data.xp || 0,
+          subscriptionStatus: data.subscriptionStatus || "not_subscribed",
+          subscriptionDaysLeft,
+          subscriptionEndDate: data.subscriptionEndDate,
+          createdAt: data.createdAt?.toDate?.().toISOString() || new Date().toISOString(),
+          lastLogin: data.lastLogin?.toDate?.().toISOString(),
+        };
+      });
+
     return NextResponse.json({
-      isSubscribed,
-      subscriptionStatus: isSubscribed ? "subscribed" : "not_subscribed",
-      subscriptionDaysLeft,
-      subscriptionEndDate,
-      xp: userXP, // Include XP in the response
+      data: users,
+      totalPages,
+      currentPage: page,
+      totalCount,
     });
 
   } catch (error) {
-    console.error("Error fetching subscription status:", error);
+    console.error("Error fetching users:", error);
     return NextResponse.json(
-      { error: "Internal server error" },
+      { error: "Internal server error", details: error instanceof Error ? error.message : "Unknown error" },
       { status: 500 }
     );
   }
