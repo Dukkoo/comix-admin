@@ -34,20 +34,31 @@ export default function MultiImageUploader({
 }: Props) {
   const uploadInputRef = useRef<HTMLInputElement | null>(null);
 
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(e.target.files || []);
-    const newImages = files.map((file, index) => {
-      const previewUrl = URL.createObjectURL(file);
-      return {
-        id: `${Date.now()}-${index}-${file.name}`,
-        url: previewUrl,
-        preview: previewUrl,
-        file,
-      };
-    });
+      const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+      const files = Array.from(e.target.files || []);
+      
+      // File size check (50MB max)
+      const maxSize = 50 * 1024 * 1024; // 50MB
+      const invalidFiles = files.filter(f => f.size > maxSize);
+      
+      // If any file is too large, stop processing
+      if (invalidFiles.length > 0) {
+        return;
+      }
+      
+      const newImages = files.map((file, index) => {
+        const previewUrl = URL.createObjectURL(file);
+        return {
+          id: `${Date.now()}-${index}-${file.name}`,
+          url: previewUrl,
+          preview: previewUrl,
+          file,
+        };
+      });
 
-    onImagesChange([...images, ...newImages]);
-  };
+      onImagesChange([...images, ...newImages]);
+    };
+
 
   const handleDragEnd = useCallback(
     (result: DropResult) => {
@@ -78,7 +89,7 @@ export default function MultiImageUploader({
         ref={uploadInputRef}
         type="file"
         multiple
-        accept="image/png,image/jpeg,image/jpg,image/webp"
+        accept="image/png,image/jpeg,image/jpg,image/webp,image/gif"
         onChange={handleInputChange}
       />
       
@@ -93,8 +104,7 @@ export default function MultiImageUploader({
           </div>
           <div>
             <p className="text-white font-medium">{label}</p>
-            <p className="text-zinc-400 text-sm mt-1">Click to upload or drag and drop</p>
-            <p className="text-zinc-500 text-xs mt-1">PNG, JPG, GIF up to 10MB each</p>
+            <p className="text-zinc-500 text-xs mt-1">PNG, JPG, GIF, WebP up to 50MB each</p>
           </div>
         </div>
       </div>
