@@ -23,12 +23,13 @@ export async function uploadToR2Server(
     
     let finalBuffer: Buffer;
     let finalPath: string;
+    let finalContentType: string;
     
-    // Шалгах: зураг эсэх
+    // Check if it's an image
     const isImage = contentType.startsWith('image/');
     
     if (!isImage) {
-      // Зураг биш бол (PDF гэх мэт) шууд upload
+      // Not an image (like PDF) - upload directly
       await r2Client.send(new PutObjectCommand({
         Bucket: process.env.R2_BUCKET_NAME!,
         Key: path,
@@ -39,21 +40,17 @@ export async function uploadToR2Server(
       return { url: `${process.env.R2_PUBLIC_URL}/${path}` };
     }
     
-    // Зураг бол WebP болгох
+    // Check if it's already WebP or GIF
     const isWebP = contentType === "image/webp" || path.toLowerCase().endsWith('.webp');
+    const isGif = contentType === "image/gif" || path.toLowerCase().endsWith('.gif');
     
-    if (isWebP) {
-      // WebP бол optimize л хийх
-      finalBuffer = await sharp(buffer)
-        .webp({ 
-          quality: 85,
-          effort: 6
-        })
-        .toBuffer();
-      
-      finalPath = path.replace(/\.(jpg|jpeg|png|webp)$/i, '.webp');
+    if (isWebP || isGif) {
+      // Don't convert WebP or GIF - upload as is
+      finalBuffer = buffer;
+      finalPath = path;
+      finalContentType = contentType;
     } else {
-      // PNG/JPG бол WebP болгох
+      // PNG/JPG - convert to WebP
       finalBuffer = await sharp(buffer)
         .webp({ 
           quality: 85,
@@ -62,14 +59,15 @@ export async function uploadToR2Server(
         .toBuffer();
       
       finalPath = path.replace(/\.(jpg|jpeg|png)$/i, '.webp');
+      finalContentType = "image/webp";
     }
     
-    // R2 руу upload
+    // Upload to R2
     await r2Client.send(new PutObjectCommand({
       Bucket: process.env.R2_BUCKET_NAME!,
       Key: finalPath,
       Body: finalBuffer,
-      ContentType: "image/webp",
+      ContentType: finalContentType,
     }));
     
     return { url: `${process.env.R2_PUBLIC_URL}/${finalPath}` };
@@ -82,7 +80,7 @@ export async function uploadToR2Server(
   }
 }
 
-// Presigned URL upload (for manga images) - ХЭВЭЭР ҮЛДЭЭХ
+// Presigned URL upload (for manga images) - KEEP AS IS
 export async function getPresignedUploadUrl(
   path: string,
   contentType: string,
@@ -113,7 +111,7 @@ export async function getPresignedUploadUrl(
   }
 }
 
-// Delete from R2 - ХЭВЭЭР ҮЛДЭЭХ
+// Delete from R2 - KEEP AS IS
 export async function deleteFromR2Server(path: string): Promise<{ error?: string }> {
   try {
     await r2Client.send(

@@ -42,7 +42,7 @@ export async function GET(
       const data = doc.data();
       chapters.push({
         id: doc.id,
-        chapterNumber: data.chapterNumber || parseInt(doc.id),
+        chapterNumber: data.chapterNumber !== undefined ? data.chapterNumber : parseInt(doc.id),
         mangaId: mangaId,
         createdAt: data.createdAt || null,
       });
@@ -104,6 +104,7 @@ export async function POST(
 
     const { chapterNumber } = validation.data;
 
+    // Check if chapter already exists
     const existingChapter = await firestore
       .collection("mangas")
       .doc(mangaId)
@@ -123,6 +124,7 @@ export async function POST(
       createdAt: new Date().toISOString(),
     };
 
+    // Create chapter document (works for 0 and positive numbers)
     await firestore
       .collection("mangas")
       .doc(mangaId)
@@ -130,6 +132,7 @@ export async function POST(
       .doc(chapterNumber.toString())
       .set(chapterData);
 
+    // Update manga chapter count
     const chaptersSnapshot = await firestore
       .collection("mangas")
       .doc(mangaId)

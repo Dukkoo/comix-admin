@@ -21,8 +21,17 @@ export default function NewChapterForm({ mangaId, mangaTitle }: Props) {
   const auth = useAuth();
   const router = useRouter();
   const [loading, setLoading] = useState(false);
-  const [chapterNumber, setChapterNumber] = useState<number>(1);
+  const [chapterNumber, setChapterNumber] = useState<string>(""); // Changed to string for better control
   const [chapterImages, setChapterImages] = useState<ImageUpload[]>([]);
+
+  const handleChapterNumberChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value;
+    
+    // Allow empty string or valid numbers (including 0)
+    if (value === "" || /^\d+$/.test(value)) {
+      setChapterNumber(value);
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -37,23 +46,26 @@ export default function NewChapterForm({ mangaId, mangaTitle }: Props) {
         return;
       }
 
-      if (!chapterNumber || chapterNumber < 1) {
-        toast.error("Please enter a valid chapter number");
+      const chapterNum = parseInt(chapterNumber);
+
+      // Allow chapter 0 and above
+      if (chapterNumber === "" || isNaN(chapterNum) || chapterNum < 0) {
+        toast.error("Бүлгийн дугаар оруулна уу (0-с эхлэх боломжтой)");
         setLoading(false);
         return;
       }
 
       if (chapterImages.length === 0) {
-        toast.error("Please upload at least one chapter image");
+        toast.error("Дор хаяж 1 зураг оруулна уу");
         setLoading(false);
         return;
       }
 
-      const loadingToast = toast.loading("Creating chapter...");
+      const loadingToast = toast.loading("Бүлэг үүсгэж байна...");
 
       // First create the chapter
       const chapterData = {
-        chapterNumber,
+        chapterNumber: chapterNum,
         mangaId,
       };
 
@@ -61,7 +73,7 @@ export default function NewChapterForm({ mangaId, mangaTitle }: Props) {
 
       if (createResponse.error) {
         toast.dismiss(loadingToast);
-        toast.error("Failed to create chapter", {
+        toast.error("Бүлэг үүсгэх амжилтгүй", {
           description: createResponse.message,
         });
         setLoading(false);
@@ -70,7 +82,7 @@ export default function NewChapterForm({ mangaId, mangaTitle }: Props) {
 
       // Update toast for upload phase
       toast.dismiss(loadingToast);
-      const uploadToast = toast.loading(`Uploading ${chapterImages.length} images...`);
+      const uploadToast = toast.loading(`${chapterImages.length} зураг байршуулж байна...`);
 
       // Upload images to R2 with WebP conversion
       const uploadPromises: Promise<{ index: number; url?: string; error?: string }>[] = [];
@@ -80,7 +92,7 @@ export default function NewChapterForm({ mangaId, mangaTitle }: Props) {
         if (image.file) {
           const timestamp = Date.now();
           const cleanFileName = image.file.name.replace(/[^a-zA-Z0-9.-]/g, '_');
-          const imagePath = `mangas/${mangaId}/chapters/${chapterNumber}/${timestamp}-page-${i + 1}-${cleanFileName}`;
+          const imagePath = `mangas/${mangaId}/chapters/${chapterNum}/${timestamp}-page-${i + 1}-${cleanFileName}`;
           
           // Convert file to ArrayBuffer and upload (Sharp will convert to WebP)
           const uploadPromise = image.file.arrayBuffer()
@@ -118,16 +130,16 @@ export default function NewChapterForm({ mangaId, mangaTitle }: Props) {
         toast.dismiss(uploadToast);
 
         if (failed.length > 0 && successful.length === 0) {
-          toast.error("All uploads failed", {
-            description: "Please try again or check your internet connection"
+          toast.error("Бүх зураг байршуулалт амжилтгүй", {
+            description: "Дахин оролдоно уу эсвэл интернэт холболтоо шалгана уу"
           });
           setLoading(false);
           return;
         }
 
         if (failed.length > 0) {
-          toast.warning(`Some uploads failed`, {
-            description: `Failed pages: ${failed.join(', ')}. Successfully uploaded ${successful.length}/${chapterImages.length} pages.`
+          toast.warning(`Зарим зураг байршуулалт амжилтгүй`, {
+            description: `Амжилтгүй хуудаснууд: ${failed.join(', ')}. ${successful.length}/${chapterImages.length} хуудас амжилттай байршлаа.`
           });
         }
 
@@ -146,34 +158,36 @@ export default function NewChapterForm({ mangaId, mangaTitle }: Props) {
         );
 
         if (saveImagesResponse.error) {
-          toast.error("Chapter created but failed to save images", {
+          toast.error("Бүлэг үүслээ гэхдээ зургийг хадгалж чадсангүй", {
             description: saveImagesResponse.message,
           });
           setLoading(false);
           return;
         }
 
-        toast.success("Chapter created successfully", {
-          description: `Chapter ${chapterNumber} with ${successful.length} pages has been added`,
+        toast.success("Бүлэг амжилттай нэмэгдлээ", {
+          description: `Бүлэг ${chapterNum} - ${successful.length} хуудастай`,
         });
 
         router.push(`/projects/chapters/${mangaId}`);
       } catch (imageError) {
         toast.dismiss(uploadToast);
         console.error("Error uploading images:", imageError);
-        toast.error("Chapter created but failed to upload images", {
-          description: "Please try adding images later"
+        toast.error("Бүлэг үүслээ гэхдээ зураг байршуулж чадсангүй", {
+          description: "Дараа нь зураг нэмнэ үү"
         });
         router.push(`/projects/chapters/${mangaId}`);
       }
 
     } catch (error) {
       console.error("Error creating chapter:", error);
-      toast.error("An unexpected error occurred");
+      toast.error("Алдаа гарлаа");
     } finally {
       setLoading(false);
     }
   };
+
+  const isFormValid = chapterNumber !== "" && !isNaN(parseInt(chapterNumber)) && parseInt(chapterNumber) >= 0 && chapterImages.length > 0;
 
   return (
     <div className="min-h-screen bg-zinc-900 p-6">
@@ -195,14 +209,15 @@ export default function NewChapterForm({ mangaId, mangaTitle }: Props) {
                 </Label>
                 <Input
                   id="chapterNumber"
-                  type="number"
-                  min="1"
+                  type="text"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
                   value={chapterNumber}
-                  onChange={(e) => setChapterNumber(parseInt(e.target.value) || 1)}
-                  placeholder="Enter chapter number"
+                  onChange={handleChapterNumberChange}
+                  placeholder=""
                   required
                   disabled={loading}
-                  className="bg-zinc-800/50 border-zinc-600/50 text-white placeholder-zinc-400 focus:border-cyan-400 focus:ring-cyan-400 rounded-lg h-12"
+                  className="bg-zinc-800/50 border-zinc-600/50 text-white placeholder-zinc-400 focus:border-cyan-400 focus:ring-cyan-400 rounded-lg h-12 text-lg [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                 />
               </div>
 
@@ -258,19 +273,19 @@ export default function NewChapterForm({ mangaId, mangaTitle }: Props) {
               <div className="pt-4">
                 <Button
                   type="submit"
-                  disabled={loading || !chapterNumber || chapterImages.length === 0}
+                  disabled={loading || !isFormValid}
                   className="w-full bg-zinc-800 hover:bg-cyan-600 text-white px-6 py-3 rounded-xl font-semibold text-lg shadow-lg hover:shadow-xl transition-all duration-300 border-0 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
                 >
                   {loading ? (
-                    <div className="flex items-center">
+                    <div className="flex items-center justify-center">
                       <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white mr-2"></div>
                       Нэмж байна...
                     </div>
                   ) : (
-                    <>
+                    <div className="flex items-center justify-center">
                       <PlusCircleIcon className="w-5 h-5 mr-2" />
                       Бүлэг нэмэх
-                    </>
+                    </div>
                   )}
                 </Button>
               </div>

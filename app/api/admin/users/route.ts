@@ -4,7 +4,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 interface UserData {
   id: string;
-  userId?: number; // 5 оронтой ID
+  userId?: number;
   username: string;
   email: string;
   xp: number;
@@ -15,9 +15,35 @@ interface UserData {
   lastLogin?: any;
 }
 
+// Helper function to generate unique 5-digit userId
+async function generateUniqueUserId(): Promise<number> {
+  const min = 10000;
+  const max = 99999;
+  
+  let attempts = 0;
+  const maxAttempts = 50;
+  
+  while (attempts < maxAttempts) {
+    const userId = Math.floor(Math.random() * (max - min + 1)) + min;
+    
+    const existingUser = await firestore
+      .collection("users")
+      .where("userId", "==", userId)
+      .limit(1)
+      .get();
+    
+    if (existingUser.empty) {
+      return userId;
+    }
+    
+    attempts++;
+  }
+  
+  throw new Error("Could not generate unique userId");
+}
+
 export async function GET(request: NextRequest) {
   try {
-    // Get auth token from headers
     const authHeader = request.headers.get("authorization");
     if (!authHeader?.startsWith("Bearer ")) {
       return NextResponse.json(
@@ -29,7 +55,6 @@ export async function GET(request: NextRequest) {
     const token = authHeader.split(" ")[1];
     const verifiedToken = await auth.verifyIdToken(token);
 
-    // Check if user is admin
     if (!verifiedToken.admin) {
       return NextResponse.json(
         { error: "Admin access required" },
@@ -37,18 +62,19 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // Get query parameters
     const { searchParams } = new URL(request.url);
     const page = parseInt(searchParams.get("page") || "1");
-    const limit = parseInt(searchParams.get("limit") || "10");
+    const limit = parseInt(searchParams.get("limit") || "25");
     const search = searchParams.get("search") || "";
+    const searchType = searchParams.get("searchType") || "";
     const status = searchParams.get("status") || "all";
+    const sortBy = searchParams.get("sortBy") || "createdAt";
+    const sortOrder = searchParams.get("sortOrder") || "desc";
 
-    // Calculate offset
     const offset = (page - 1) * limit;
 
     // Get all users from Firebase Authentication
-    const authUsers = await auth.listUsers(1000); // Get up to 1000 users
+    const authUsers = await auth.listUsers(1000);
     
     // Get all user documents from Firestore
     const userDocsSnapshot = await firestore.collection("users").get();
@@ -58,71 +84,143 @@ export async function GET(request: NextRequest) {
     });
 
     // Combine auth users with Firestore data
-    let allUsers: UserData[] = authUsers.users.map(authUser => {
-      const firestoreData = userDocs[authUser.uid] || {};
-      
-      return {
-        id: authUser.uid,
-        userId: firestoreData?.userId, // 5 оронтой ID
-        username: firestoreData?.username || authUser.displayName || authUser.email?.split('@')[0] || 'Unknown',
-        email: authUser.email || 'No email',
-        xp: firestoreData?.xp || 0,
-        subscriptionStatus: firestoreData?.subscriptionStatus || "not_subscribed",
-        subscriptionEndDate: firestoreData?.subscriptionEndDate || null,
-        createdAt: authUser.metadata.creationTime || new Date().toISOString(),
-        lastLogin: authUser.metadata.lastSignInTime || null,
-      };
-    });
-
-    // Apply search filter
-    if (search.trim()) {
-      const searchTerm = search.toLowerCase();
-      const searchNumber = parseInt(search);
-      
-      allUsers = allUsers.filter(user => {
-        // Хэрэв тоо бол userId-аар хайна
-        if (!isNaN(searchNumber) && user.userId) {
-          return user.userId === searchNumber;
+    const allUsers: UserData[] = await Promise.all(
+      authUsers.users.map(async (authUser) => {
+        const firestoreData = userDocs[authUser.uid] || {};
+        
+        // Auto-generate userId if missing
+        let userId = firestoreData?.userId;
+        if (!userId) {
+          try {
+            userId = await generateUniqueUserId();
+            const userRef = firestore.collection("users").doc(authUser.uid);
+            
+            if (await userRef.get().then(doc => doc.exists)) {
+              await userRef.update({ 
+                userId, 
+                updatedAt: new Date().toISOString() 
+              });
+            } else {
+              await userRef.set({
+                userId,
+                username: authUser.displayName || authUser.email?.split('@')[0] || 'Unknown',
+                email: authUser.email || '',
+                xp: 0,
+                subscriptionStatus: "not_subscribed",
+                createdAt: authUser.metadata.creationTime || new Date().toISOString(),
+                updatedAt: new Date().toISOString(),
+              });
+            }
+            console.log(`✅ Generated userId ${userId} for ${authUser.email}`);
+          } catch (error) {
+            console.error(`❌ Failed to generate userId for ${authUser.email}:`, error);
+          }
         }
         
-        // Биш бол Firebase UID, нэр, имэйлээр хайна
-        return user.id.toLowerCase().includes(searchTerm) ||
-               user.username?.toLowerCase().includes(searchTerm) ||
-               user.email?.toLowerCase().includes(searchTerm);
-      });
+        // CRITICAL: Use Firestore createdAt if available, fallback to Auth metadata
+        // This ensures proper sorting by actual registration date
+        let createdAt: string;
+        if (firestoreData?.createdAt) {
+          // Firestore has createdAt - use it (most accurate)
+          if (firestoreData.createdAt.toDate) {
+            // Firestore Timestamp
+            createdAt = firestoreData.createdAt.toDate().toISOString();
+          } else {
+            // String format
+            createdAt = firestoreData.createdAt;
+          }
+        } else {
+          // No Firestore createdAt - use Firebase Auth as fallback
+          createdAt = authUser.metadata.creationTime || new Date().toISOString();
+          
+          // Save this to Firestore for future consistency
+          try {
+            const userRef = firestore.collection("users").doc(authUser.uid);
+            if (await userRef.get().then(doc => doc.exists)) {
+              await userRef.update({ 
+                createdAt,
+                updatedAt: new Date().toISOString()
+              });
+            }
+          } catch (error) {
+            console.error(`❌ Failed to save createdAt for ${authUser.email}`);
+          }
+        }
+        
+        return {
+          id: authUser.uid,
+          userId,
+          username: firestoreData?.username || authUser.displayName || authUser.email?.split('@')[0] || 'Unknown',
+          email: authUser.email || 'No email',
+          xp: firestoreData?.xp || 0,
+          subscriptionStatus: firestoreData?.subscriptionStatus || "not_subscribed",
+          subscriptionEndDate: firestoreData?.subscriptionEndDate || null,
+          createdAt,
+          lastLogin: authUser.metadata.lastSignInTime || null,
+        };
+      })
+    );
+
+    // Apply search filter
+    let filteredUsers = allUsers;
+    if (search.trim()) {
+      const searchTerm = search.trim().toLowerCase();
+      
+      if (searchType === 'email') {
+        filteredUsers = allUsers.filter(user => 
+          user.email?.toLowerCase().includes(searchTerm)
+        );
+      } else if (searchType === 'userId' && /^\d+$/.test(searchTerm)) {
+        filteredUsers = allUsers.filter(user => 
+          user.userId && user.userId.toString().includes(searchTerm)
+        );
+      } else if (searchType === 'username') {
+        filteredUsers = allUsers.filter(user =>
+          user.username?.toLowerCase().includes(searchTerm)
+        );
+      } else {
+        // Auto-detect
+        if (searchTerm.includes('@')) {
+          filteredUsers = allUsers.filter(user => 
+            user.email?.toLowerCase().includes(searchTerm)
+          );
+        } else if (/^\d+$/.test(searchTerm)) {
+          filteredUsers = allUsers.filter(user => 
+            user.userId && user.userId.toString().includes(searchTerm)
+          );
+        } else {
+          filteredUsers = allUsers.filter(user =>
+            user.id.toLowerCase().includes(searchTerm) ||
+            user.username?.toLowerCase().includes(searchTerm)
+          );
+        }
+      }
     }
 
-    // Calculate subscription days left for each user and auto-update expired ones
-    const processedUsers = await Promise.all(allUsers.map(async (user) => {
+    // Calculate subscription days left
+    const processedUsers = await Promise.all(filteredUsers.map(async (user) => {
       let subscriptionDaysLeft: number | undefined;
       let subscriptionStatus = user.subscriptionStatus || "not_subscribed";
-      let needsUpdate = false;
       
       if (user.subscriptionEndDate) {
         const endDate = new Date(user.subscriptionEndDate);
         const now = new Date();
-        
-        // Calculate the exact time difference
         const diffTime = endDate.getTime() - now.getTime();
         const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
         
         if (diffTime <= 0) {
-          // Subscription has expired (exact time passed)
           if (user.subscriptionStatus === "subscribed") {
-            // User was subscribed but now expired - update in database
-            needsUpdate = true;
             subscriptionStatus = "not_subscribed";
             subscriptionDaysLeft = 0;
             
-            // Update in Firestore
             try {
               const userRef = firestore.collection("users").doc(user.id);
               await userRef.update({
                 subscriptionStatus: "not_subscribed",
-                updatedAt: new Date(),
+                updatedAt: new Date().toISOString(),
               });
             } catch (error) {
-              console.warn(`Failed to update expired subscription for user ${user.id}:`, error);
+              console.warn(`Failed to update expired subscription for user ${user.id}`);
             }
           } else {
             subscriptionStatus = "not_subscribed";
@@ -144,24 +242,53 @@ export async function GET(request: NextRequest) {
 
     // Apply status filter
     if (status !== "all") {
-      const filteredUsers = processedUsers.filter(user => user.subscriptionStatus === status);
-      const totalCount = filteredUsers.length;
-      const totalPages = Math.ceil(totalCount / limit);
-      const paginatedUsers = filteredUsers.slice(offset, offset + limit);
-
-      return NextResponse.json({
-        data: paginatedUsers,
-        totalPages,
-        currentPage: page,
-        totalCount,
-      });
+      filteredUsers = processedUsers.filter(user => user.subscriptionStatus === status);
+    } else {
+      filteredUsers = processedUsers;
     }
 
-    const totalCount = processedUsers.length;
-    const totalPages = Math.ceil(totalCount / limit);
+    // SORTING - Fixed to properly sort by creation date
+    filteredUsers.sort((a, b) => {
+      let aValue: any;
+      let bValue: any;
 
-    // Apply pagination
-    const paginatedUsers = processedUsers.slice(offset, offset + limit);
+      if (sortBy === 'createdAt') {
+        // Parse dates properly
+        const aDate = new Date(a.createdAt);
+        const bDate = new Date(b.createdAt);
+        
+        // Validate dates
+        aValue = isNaN(aDate.getTime()) ? 0 : aDate.getTime();
+        bValue = isNaN(bDate.getTime()) ? 0 : bDate.getTime();
+        
+        // Debug log for troubleshooting
+        if (sortOrder === 'desc') {
+          console.log(`Sorting: ${a.email} (${new Date(aValue).toLocaleDateString()}) vs ${b.email} (${new Date(bValue).toLocaleDateString()})`);
+        }
+      } else if (sortBy === 'lastLogin') {
+        aValue = a.lastLogin ? new Date(a.lastLogin).getTime() : 0;
+        bValue = b.lastLogin ? new Date(b.lastLogin).getTime() : 0;
+      } else if (sortBy === 'xp') {
+        aValue = a.xp || 0;
+        bValue = b.xp || 0;
+      } else if (sortBy === 'userId') {
+        aValue = a.userId || 0;
+        bValue = b.userId || 0;
+      } else {
+        aValue = a.username?.toLowerCase() || '';
+        bValue = b.username?.toLowerCase() || '';
+      }
+
+      if (sortOrder === 'desc') {
+        return bValue > aValue ? 1 : bValue < aValue ? -1 : 0;
+      } else {
+        return aValue > bValue ? 1 : aValue < bValue ? -1 : 0;
+      }
+    });
+
+    const totalCount = filteredUsers.length;
+    const totalPages = Math.ceil(totalCount / limit);
+    const paginatedUsers = filteredUsers.slice(offset, offset + limit);
 
     return NextResponse.json({
       data: paginatedUsers,
@@ -179,110 +306,72 @@ export async function GET(request: NextRequest) {
   }
 }
 
-// Update user subscription
+// PATCH endpoint stays the same...
 export async function PATCH(request: NextRequest) {
   try {
-    // Get auth token from headers
     const authHeader = request.headers.get("authorization");
     if (!authHeader?.startsWith("Bearer ")) {
-      return NextResponse.json(
-        { error: "Unauthorized" },
-        { status: 401 }
-      );
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
     const token = authHeader.split(" ")[1];
     const verifiedToken = await auth.verifyIdToken(token);
 
-    // Check if user is admin
     if (!verifiedToken.admin) {
-      return NextResponse.json(
-        { error: "Admin access required" },
-        { status: 403 }
-      );
+      return NextResponse.json({ error: "Admin access required" }, { status: 403 });
     }
 
     const { userId, subscriptionDays, xp, mode } = await request.json();
 
     if (!userId) {
-      return NextResponse.json(
-        { error: "User ID is required" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "User ID is required" }, { status: 400 });
     }
 
-    // Check if user exists in Firebase Auth
     try {
       await auth.getUser(userId);
     } catch (error) {
-      return NextResponse.json(
-        { error: "User not found in authentication" },
-        { status: 404 }
-      );
+      return NextResponse.json({ error: "User not found" }, { status: 404 });
     }
 
     const userRef = firestore.collection("users").doc(userId);
     const userDoc = await userRef.get();
-
     const updateData: any = {};
 
-    // Update subscription if provided
     if (subscriptionDays !== undefined) {
       if (subscriptionDays === 0) {
-        // Remove subscription
         updateData.subscriptionStatus = "not_subscribed";
         updateData.subscriptionEndDate = null;
         updateData.subscriptionStartDate = null;
       } else {
-        // Get current user data to check existing subscription
         const currentUserData = userDoc.exists ? userDoc.data() : {};
         let newEndDate: Date;
 
         if (mode === "set") {
-          // Set total mode - always start from now regardless of existing subscription
           newEndDate = new Date();
           newEndDate.setDate(newEndDate.getDate() + subscriptionDays);
-          
           updateData.subscriptionStatus = "subscribed";
           updateData.subscriptionEndDate = newEndDate.toISOString();
           updateData.subscriptionStartDate = new Date().toISOString();
         } else {
-          // Add/Remove mode
           if (subscriptionDays > 0) {
-            // Adding days - check if user has existing subscription
             if (currentUserData?.subscriptionStatus === "subscribed" && currentUserData?.subscriptionEndDate) {
-              // User has active subscription - add to existing end date
               const currentEndDate = new Date(currentUserData.subscriptionEndDate);
               const now = new Date();
-              
-              // If subscription hasn't expired, add to end date; otherwise start from now
-              if (currentEndDate > now) {
-                newEndDate = new Date(currentEndDate);
-                newEndDate.setDate(newEndDate.getDate() + subscriptionDays);
-              } else {
-                newEndDate = new Date();
-                newEndDate.setDate(newEndDate.getDate() + subscriptionDays);
-              }
+              newEndDate = currentEndDate > now ? new Date(currentEndDate) : new Date();
+              newEndDate.setDate(newEndDate.getDate() + subscriptionDays);
             } else {
-              // No active subscription - start from now
               newEndDate = new Date();
               newEndDate.setDate(newEndDate.getDate() + subscriptionDays);
             }
-            
             updateData.subscriptionStatus = "subscribed";
             updateData.subscriptionEndDate = newEndDate.toISOString();
-            
-            // Set start date only if it's a new subscription
             if (!currentUserData?.subscriptionStartDate || currentUserData?.subscriptionStatus !== "subscribed") {
               updateData.subscriptionStartDate = new Date().toISOString();
             }
           } else {
-            // Negative days - subtract from existing subscription
             if (currentUserData?.subscriptionEndDate) {
               newEndDate = new Date(currentUserData.subscriptionEndDate);
-              newEndDate.setDate(newEndDate.getDate() + subscriptionDays); // subscriptionDays is negative
-              
-              // If the new end date is in the past, set to not subscribed
+              newEndDate.setDate(newEndDate.getDate() + subscriptionDays);
               if (newEndDate <= new Date()) {
                 updateData.subscriptionStatus = "not_subscribed";
                 updateData.subscriptionEndDate = null;
@@ -292,7 +381,6 @@ export async function PATCH(request: NextRequest) {
                 updateData.subscriptionEndDate = newEndDate.toISOString();
               }
             } else {
-              // No existing subscription to subtract from
               updateData.subscriptionStatus = "not_subscribed";
               updateData.subscriptionEndDate = null;
               updateData.subscriptionStartDate = null;
@@ -302,26 +390,25 @@ export async function PATCH(request: NextRequest) {
       }
     }
 
-    // Update XP if provided
     if (xp !== undefined) {
-      updateData.xp = Math.max(0, xp); // Ensure XP is not negative
+      updateData.xp = Math.max(0, xp);
     }
 
     if (Object.keys(updateData).length > 0) {
-      updateData.updatedAt = new Date();
+      updateData.updatedAt = new Date().toISOString();
       
       if (userDoc.exists) {
-        // Update existing document
         await userRef.update(updateData);
       } else {
-        // Create new document if it doesn't exist
         const authUser = await auth.getUser(userId);
+        const newUserId = await generateUniqueUserId();
         await userRef.set({
+          userId: newUserId,
           username: authUser.displayName || authUser.email?.split('@')[0] || 'Unknown',
           email: authUser.email || '',
           xp: 0,
           subscriptionStatus: "not_subscribed",
-          createdAt: new Date(),
+          createdAt: authUser.metadata.creationTime || new Date().toISOString(),
           ...updateData,
         });
       }
@@ -334,9 +421,6 @@ export async function PATCH(request: NextRequest) {
 
   } catch (error) {
     console.error("Error updating user:", error);
-    return NextResponse.json(
-      { error: "Internal server error" },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }

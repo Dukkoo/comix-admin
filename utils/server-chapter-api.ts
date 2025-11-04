@@ -1,3 +1,4 @@
+// utils/server-chapter-api.ts
 import { firestore } from "@/firebase/server";
 import { Chapter } from "./chapter-api";
 
@@ -25,9 +26,9 @@ export async function fetchChaptersByMangaIdServer(mangaId: string, page: number
       const data = doc.data();
       chapters.push({
         id: doc.id,
-        chapterNumber: data.chapterNumber || parseInt(doc.id),
-        mangaId: mangaId, // Use the parameter instead of data
-        createdAt: data.createdAt || null, // Include createdAt
+        chapterNumber: data.chapterNumber !== undefined ? data.chapterNumber : parseInt(doc.id),
+        mangaId: mangaId,
+        createdAt: data.createdAt || null,
       });
     });
     
@@ -66,9 +67,9 @@ export async function fetchChapterByIdServer(mangaId: string, chapterId: string)
     
     return {
       id: doc.id,
-      chapterNumber: data?.chapterNumber || parseInt(doc.id),
-      mangaId: mangaId, // Use the parameter
-      createdAt: data?.createdAt || null, // Include createdAt
+      chapterNumber: data?.chapterNumber !== undefined ? data.chapterNumber : parseInt(doc.id),
+      mangaId: mangaId,
+      createdAt: data?.createdAt || null,
     } as Chapter;
   } catch (error) {
     console.error("Error fetching chapter by ID from server:", error);
