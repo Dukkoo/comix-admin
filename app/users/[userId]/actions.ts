@@ -29,7 +29,6 @@ export async function updateUser({
       };
     }
 
-    // Check if user exists in Firebase Auth
     try {
       await auth.getUser(userId);
     } catch (error) {
@@ -45,21 +44,17 @@ export async function updateUser({
     const updateData: any = {};
     const messages: string[] = [];
 
-    // Update subscription if provided
     if (subscriptionDays !== undefined) {
       if (subscriptionDays === 0) {
-        // Remove subscription
         updateData.subscriptionStatus = "not_subscribed";
         updateData.subscriptionEndDate = null;
         updateData.subscriptionStartDate = null;
         messages.push("Subscription removed");
       } else {
-        // Get current user data to check existing subscription
         const currentUserData = userDoc.exists ? userDoc.data() : {};
         let newEndDate: Date;
 
         if (mode === "set") {
-          // Set total mode - always start from now regardless of existing subscription
           newEndDate = new Date();
           newEndDate.setDate(newEndDate.getDate() + subscriptionDays);
           
@@ -68,13 +63,10 @@ export async function updateUser({
           updateData.subscriptionStartDate = new Date().toISOString();
           messages.push(`Subscription set to ${subscriptionDays} days`);
         } else {
-          // Add mode
           if (currentUserData?.subscriptionStatus === "subscribed" && currentUserData?.subscriptionEndDate) {
-            // User has active subscription - add to existing end date
             const currentEndDate = new Date(currentUserData.subscriptionEndDate);
             const now = new Date();
             
-            // If subscription hasn't expired, add to end date; otherwise start from now
             if (currentEndDate > now) {
               newEndDate = new Date(currentEndDate);
               newEndDate.setDate(newEndDate.getDate() + subscriptionDays);
@@ -85,7 +77,6 @@ export async function updateUser({
               messages.push(`Started new ${subscriptionDays}-day subscription`);
             }
           } else {
-            // No active subscription - start from now
             newEndDate = new Date();
             newEndDate.setDate(newEndDate.getDate() + subscriptionDays);
             messages.push(`Started new ${subscriptionDays}-day subscription`);
@@ -94,7 +85,6 @@ export async function updateUser({
           updateData.subscriptionStatus = "subscribed";
           updateData.subscriptionEndDate = newEndDate.toISOString();
           
-          // Set start date only if it's a new subscription
           if (!currentUserData?.subscriptionStartDate || currentUserData?.subscriptionStatus !== "subscribed") {
             updateData.subscriptionStartDate = new Date().toISOString();
           }
@@ -102,7 +92,6 @@ export async function updateUser({
       }
     }
 
-    // Update XP if provided
     if (xp !== undefined) {
       updateData.xp = Math.max(0, xp);
       messages.push(`XP updated to ${xp.toLocaleString()}`);
@@ -112,10 +101,8 @@ export async function updateUser({
       updateData.updatedAt = new Date();
       
       if (userDoc.exists) {
-        // Update existing document
         await userRef.update(updateData);
       } else {
-        // Create new document if it doesn't exist
         const authUser = await auth.getUser(userId);
         await userRef.set({
           username: authUser.displayName || authUser.email?.split('@')[0] || 'Unknown',
@@ -156,7 +143,6 @@ export async function getUser(userId: string, authToken: string) {
       };
     }
 
-    // Get user from Firebase Authentication
     let authUser;
     try {
       authUser = await auth.getUser(userId);
@@ -167,12 +153,32 @@ export async function getUser(userId: string, authToken: string) {
       };
     }
 
-    // Get user document from Firestore
     const userDocRef = firestore.collection("users").doc(userId);
     const userDoc = await userDocRef.get();
     const firestoreData = userDoc.exists ? userDoc.data() : {};
 
-    // Combine auth and firestore data
+    // Get devices
+    const devicesSnapshot = await firestore
+      .collection("users")
+      .doc(userId)
+      .collection("devices")
+      .get();
+    
+    const devices = devicesSnapshot.docs.map((doc) => ({
+      deviceId: doc.id,
+      ...doc.data(),
+    })) as any[];
+
+    // Get suspension info
+    const suspensionRef = firestore.collection("suspension_info").doc(userId);
+    const suspensionDoc = await suspensionRef.get();
+    const suspensionData = suspensionDoc.exists ? suspensionDoc.data() : null;
+    const suspensionInfo = suspensionData ? {
+      isSuspended: true,
+      suspendedUntil: suspensionData.suspendedUntil,
+      reason: suspensionData.reason,
+    } : null;
+
     const userData = {
       id: authUser.uid,
       username: firestoreData?.username || authUser.displayName || authUser.email?.split('@')[0] || 'Unknown',
@@ -183,9 +189,10 @@ export async function getUser(userId: string, authToken: string) {
       subscriptionStartDate: firestoreData?.subscriptionStartDate || null,
       createdAt: authUser.metadata.creationTime || new Date().toISOString(),
       lastLogin: authUser.metadata.lastSignInTime || null,
+      devices,
+      suspensionInfo: suspensionInfo || null,
     };
 
-    // Calculate subscription days left
     let subscriptionDaysLeft: number | undefined;
     if (userData.subscriptionEndDate) {
       const endDate = new Date(userData.subscriptionEndDate);
@@ -215,6 +222,83 @@ export async function getUser(userId: string, authToken: string) {
     return {
       success: false,
       error: "Internal server error",
+    };
+  }
+}
+
+export async function removeDevice(userId: string, deviceId: string, authToken: string) {
+  try {
+    const verifiedToken = await auth.verifyIdToken(authToken);
+
+    if (!verifiedToken.admin) {
+      return {
+        success: false,
+        error: "Admin access required",
+      };
+    }
+
+    // Remove from user devices collection
+    await firestore
+      .collection("users")
+      .doc(userId)
+      .collection("devices")
+      .doc(deviceId)
+      .delete();
+
+    // Also remove from device_tracking collection if exists
+    await firestore
+      .collection("device_tracking")
+      .doc(userId)
+      .collection("devices")
+      .doc(deviceId)
+      .delete()
+      .catch(() => {}); // Ignore if doesn't exist
+
+    revalidatePath(`/admin/users/${userId}`);
+
+    return {
+      success: true,
+      message: "Device removed successfully",
+    };
+
+  } catch (error) {
+    console.error("Error removing device:", error);
+    return {
+      success: false,
+      error: "Failed to remove device",
+    };
+  }
+}
+
+export async function unsuspendUser(userId: string, authToken: string) {
+  try {
+    const verifiedToken = await auth.verifyIdToken(authToken);
+
+    if (!verifiedToken.admin) {
+      return {
+        success: false,
+        error: "Admin access required",
+      };
+    }
+
+    // Remove suspension record
+    await firestore
+      .collection("suspension_info")
+      .doc(userId)
+      .delete();
+
+    revalidatePath(`/admin/users/${userId}`);
+
+    return {
+      success: true,
+      message: "User unsuspended successfully",
+    };
+
+  } catch (error) {
+    console.error("Error unsuspending user:", error);
+    return {
+      success: false,
+      error: "Failed to unsuspend user",
     };
   }
 }

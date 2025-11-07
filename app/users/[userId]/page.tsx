@@ -1,21 +1,34 @@
-// app/admin/users/[userId]/page.tsx
 "use client";
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from '@/app/providers';
-import { ArrowLeft, Crown, Calendar, Mail, User, Zap, Edit, Plus, Minus, Hash } from "lucide-react";
+import { ArrowLeft, Crown, Calendar, Mail, User, Zap, Edit, Plus, Minus, Hash, Monitor, Trash2, Ban, RotateCcw } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { updateUser, getUser } from "./actions";
+import { updateUser, getUser, removeDevice, unsuspendUser } from "./actions";
+
+interface Device {
+  deviceId: string;
+  deviceName: string;
+  browser: string;
+  os: string;
+  lastActive: string;
+}
+
+interface SuspensionInfo {
+  isSuspended: boolean;
+  suspendedUntil?: string;
+  reason?: string;
+}
 
 interface User {
   id: string;
-  userId?: number; // 5 оронтой ID
+  userId?: number;
   username: string;
   email: string;
   xp: number;
@@ -36,14 +49,16 @@ export default function UserEditPage({ params }: UserEditPageProps) {
   const router = useRouter();
   const auth = useAuth();
   const [user, setUser] = useState<User | null>(null);
+  const [devices, setDevices] = useState<Device[]>([]);
+  const [suspensionInfo, setSuspensionInfo] = useState<SuspensionInfo | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [subscriptionDays, setSubscriptionDays] = useState<string>("");
   const [xpAmount, setXpAmount] = useState<string>("");
   const [userId, setUserId] = useState<string>("");
   const [mode, setMode] = useState<"add" | "set">("add");
+  const [suspendingDays, setSuspendingDays] = useState<string>("");
 
-  // Resolve params Promise
   useEffect(() => {
     const resolveParams = async () => {
       const resolvedParams = await params;
@@ -78,6 +93,8 @@ export default function UserEditPage({ params }: UserEditPageProps) {
       }
 
       setUser(result.data);
+      setDevices(result.data.devices || []);
+      setSuspensionInfo(result.data.suspensionInfo || null);
       setXpAmount(result.data.xp.toString());
     } catch (error) {
       console.error('Error fetching user:', error);
@@ -125,7 +142,6 @@ export default function UserEditPage({ params }: UserEditPageProps) {
         description: result.message,
       });
 
-      // Refresh user data and reset form
       await fetchUser();
       setSubscriptionDays("");
     } catch (error) {
@@ -133,6 +149,60 @@ export default function UserEditPage({ params }: UserEditPageProps) {
       toast.error("Failed to update user");
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleRemoveDevice = async (deviceId: string) => {
+    if (!confirm("Төхөөрөмжийг устгахыг хүсэж байна уу?")) return;
+
+    try {
+      const token = await auth?.currentUser?.getIdToken();
+      
+      if (!token) {
+        toast.error("Authentication required");
+        return;
+      }
+
+      const result = await removeDevice(user!.id, deviceId, token);
+
+      if (!result.success) {
+        toast.error(result.error || "Failed to remove device");
+        return;
+      }
+
+      toast.success("Төхөөрөмж устгагдлаа");
+      await fetchUser();
+    } catch (error) {
+      console.error("Error removing device:", error);
+      toast.error("Failed to remove device");
+    }
+  };
+
+  const handleUnsuspend = async () => {
+    if (!user) return;
+
+    if (!confirm("Хэрэглэгчийг BAN-аас чөлөөлөхөд хүсэж байна уу?")) return;
+
+    try {
+      const token = await auth?.currentUser?.getIdToken();
+      
+      if (!token) {
+        toast.error("Authentication required");
+        return;
+      }
+
+      const result = await unsuspendUser(user.id, token);
+
+      if (!result.success) {
+        toast.error(result.error || "Failed to unsuspend user");
+        return;
+      }
+
+      toast.success("Хэрэглэгч BAN-аас чөлөөллөө");
+      await fetchUser();
+    } catch (error) {
+      console.error("Error unsuspending user:", error);
+      toast.error("Failed to unsuspend user");
     }
   };
 
@@ -176,8 +246,7 @@ export default function UserEditPage({ params }: UserEditPageProps) {
   if (loading) {
     return (
       <div className="min-h-screen bg-zinc-900 p-6">
-        <div className="max-w-4xl mx-auto space-y-6">
-          {/* Header Skeleton */}
+        <div className="max-w-6xl mx-auto space-y-6">
           <div className="flex items-center gap-4">
             <Skeleton className="h-10 w-10 bg-zinc-800" />
             <div>
@@ -186,7 +255,6 @@ export default function UserEditPage({ params }: UserEditPageProps) {
             </div>
           </div>
 
-          {/* Cards Skeleton */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             <Card className="bg-zinc-800/50 border-zinc-700/50">
               <CardHeader>
@@ -236,7 +304,7 @@ export default function UserEditPage({ params }: UserEditPageProps) {
 
   return (
     <div className="min-h-screen bg-zinc-900 p-6">
-      <div className="max-w-4xl mx-auto space-y-6">
+      <div className="max-w-6xl mx-auto space-y-6">
         {/* Header */}
         <div className="flex items-center gap-4">
           <Button
@@ -252,83 +320,125 @@ export default function UserEditPage({ params }: UserEditPageProps) {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* User Information Card */}
-          <Card className="bg-zinc-800/50 border-zinc-700/50">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2 text-white">
-                <User className="w-5 h-5 text-cyan-400" />
-                Хэрэглэгчийн мэдээлэл
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-6">
-              {/* User Profile */}
-              <div className="flex items-center gap-3">
-                <div className="w-12 h-12 bg-gradient-to-br from-cyan-500 to-blue-600 rounded-full flex items-center justify-center">
-                  <User className="w-6 h-6 text-white" />
-                </div>
-                <div>
-                  <h3 className="font-semibold text-white">{user.username}</h3>
-                  <p className="text-sm text-zinc-400 flex items-center gap-1">
-                    <Mail className="w-3 h-3" />
-                    {user.email}
-                  </p>
-                  {user.userId && (
-                    <p className="text-sm text-cyan-400 font-mono flex items-center gap-1">
-                      <Hash className="w-3 h-3" />
-                      ID: {user.userId}
+          <div className="lg:col-span-2 space-y-6">
+            <Card className="bg-zinc-800/50 border-zinc-700/50">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-white">
+                  <User className="w-5 h-5 text-cyan-400" />
+                  Хэрэглэгчийн мэдээлэл
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                <div className="flex items-center gap-3">
+                  <div className="w-12 h-12 bg-gradient-to-br from-cyan-500 to-blue-600 rounded-full flex items-center justify-center">
+                    <User className="w-6 h-6 text-white" />
+                  </div>
+                  <div>
+                    <h3 className="font-semibold text-white">{user.username}</h3>
+                    <p className="text-sm text-zinc-400 flex items-center gap-1">
+                      <Mail className="w-3 h-3" />
+                      {user.email}
                     </p>
-                  )}
-                </div>
-              </div>
-
-              {/* Stats Grid */}
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <p className="text-xs text-zinc-500 uppercase tracking-wide">Төлөв</p>
-                  {getSubscriptionBadge()}
-                </div>
-                <div className="space-y-2">
-                  <p className="text-xs text-zinc-500 uppercase tracking-wide">Оноо</p>
-                  <div className="flex items-center gap-1 text-yellow-400">
-                    <Zap className="w-4 h-4" />
-                    <span className="font-medium">{formatXP(user.xp)}</span>
-                    <span className="text-xs text-zinc-500">({user.xp.toLocaleString()})</span>
+                    {user.userId && (
+                      <p className="text-sm text-cyan-400 font-mono flex items-center gap-1">
+                        <Hash className="w-3 h-3" />
+                        ID: {user.userId}
+                      </p>
+                    )}
                   </div>
                 </div>
-              </div>
 
-              {user.subscriptionStatus === "subscribed" && user.subscriptionDaysLeft !== undefined && (
-                <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-lg p-4 space-y-2">
-                  <p className="text-sm text-emerald-400 flex items-center gap-1">
-                    <Calendar className="w-4 h-4" />
-                    {user.subscriptionDaysLeft === 0 
-                      ? "Өнөөдөр дуусна." 
-                      : user.subscriptionDaysLeft === 1 
-                      ? "1 өдөр дутуу байна." 
-                      : `${user.subscriptionDaysLeft} өдөр дутуу байна.`
-                    }
-                  </p>
-                  {user.subscriptionEndDate && (
-                    <p className="text-xs text-emerald-300">
-                      Дуусах огноо: {formatDate(user.subscriptionEndDate)}
-                    </p>
-                  )}
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <p className="text-xs text-zinc-500 uppercase tracking-wide">Төлөв</p>
+                    {getSubscriptionBadge()}
+                  </div>
+                  <div className="space-y-2">
+                    <p className="text-xs text-zinc-500 uppercase tracking-wide">Оноо</p>
+                    <div className="flex items-center gap-1 text-yellow-400">
+                      <Zap className="w-4 h-4" />
+                      <span className="font-medium">{formatXP(user.xp)}</span>
+                      <span className="text-xs text-zinc-500">({user.xp.toLocaleString()})</span>
+                    </div>
+                  </div>
                 </div>
-              )}
 
-              <div className="text-xs text-zinc-500 pt-2 border-t border-zinc-700">
-                Хэрэглэгч болсон огноо: {new Date(user.createdAt).toLocaleDateString("en-US", {
-                  year: "numeric",
-                  month: "long",
-                  day: "numeric",
-                })}
-              </div>
-            </CardContent>
-          </Card>
+                {user.subscriptionStatus === "subscribed" && user.subscriptionDaysLeft !== undefined && (
+                  <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-lg p-4 space-y-2">
+                    <p className="text-sm text-emerald-400 flex items-center gap-1">
+                      <Calendar className="w-4 h-4" />
+                      {user.subscriptionDaysLeft === 0 
+                        ? "Өнөөдөр дуусна." 
+                        : user.subscriptionDaysLeft === 1 
+                        ? "1 өдөр дутуу байна." 
+                        : `${user.subscriptionDaysLeft} өдөр дутуу байна.`
+                      }
+                    </p>
+                    {user.subscriptionEndDate && (
+                      <p className="text-xs text-emerald-300">
+                        Дуусах огноо: {formatDate(user.subscriptionEndDate)}
+                      </p>
+                    )}
+                  </div>
+                )}
+
+                <div className="text-xs text-zinc-500 pt-2 border-t border-zinc-700">
+                  Хэрэглэгч болсон огноо: {new Date(user.createdAt).toLocaleDateString("en-US", {
+                    year: "numeric",
+                    month: "long",
+                    day: "numeric",
+                  })}
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Devices Card */}
+            <Card className="bg-zinc-800/50 border-zinc-700/50">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-white">
+                  <Monitor className="w-5 h-5 text-cyan-400" />
+                  Бүртгэгдсэн төхөөрөмжүүд ({devices.length}/2)
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                {devices.length === 0 ? (
+                  <p className="text-zinc-400 text-sm">Төхөөрөмж бүртгэгдээгүй байна</p>
+                ) : (
+                  <div className="space-y-3">
+                    {devices.map((device) => (
+                      <div
+                        key={device.deviceId}
+                        className="bg-zinc-900/50 border border-zinc-700/30 rounded-lg p-4 flex justify-between items-start"
+                      >
+                        <div>
+                          <p className="text-white font-medium">{device.deviceName}</p>
+                          <p className="text-sm text-zinc-400">
+                            {device.browser} • {device.os}
+                          </p>
+                          <p className="text-xs text-zinc-500 mt-1">
+                            Сүүлд идэвхтэй: {new Date(device.lastActive).toLocaleString('mn-MN')}
+                          </p>
+                        </div>
+                        <Button
+                          onClick={() => handleRemoveDevice(device.deviceId)}
+                          variant="outline"
+                          size="sm"
+                          className="border-red-600 text-red-400 hover:bg-red-900/20"
+                        >
+                          <Trash2 className="w-3 h-3" />
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </div>
 
           {/* Management Form Card */}
-          <Card className="bg-zinc-800/50 border-zinc-700/50">
+          <Card className="bg-zinc-800/50 border-zinc-700/50 h-fit">
             <CardHeader>
               <CardTitle className="flex items-center gap-2 text-white">
                 <Edit className="w-5 h-5 text-cyan-400" />
@@ -336,6 +446,34 @@ export default function UserEditPage({ params }: UserEditPageProps) {
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-6">
+              {/* Suspension Status */}
+              {suspensionInfo?.isSuspended && (
+                <div className="bg-red-900/20 border border-red-600/30 rounded-lg p-3 space-y-2">
+                  <p className="text-sm text-red-400 flex items-center gap-2">
+                    <Ban className="w-4 h-4" />
+                    BAN-д шатаатай байна
+                  </p>
+                  {suspensionInfo.suspendedUntil && (
+                    <p className="text-xs text-red-300">
+                      Дуусах: {formatDate(suspensionInfo.suspendedUntil)}
+                    </p>
+                  )}
+                  {suspensionInfo.reason && (
+                    <p className="text-xs text-red-300">
+                      Шалтгаан: {suspensionInfo.reason}
+                    </p>
+                  )}
+                  <Button
+                    onClick={handleUnsuspend}
+                    size="sm"
+                    className="w-full mt-2 bg-emerald-600 hover:bg-emerald-700 text-white"
+                  >
+                    <RotateCcw className="w-3 h-3 mr-1" />
+                    BAN чөлөөлөх
+                  </Button>
+                </div>
+              )}
+
               {/* Subscription Management */}
               <div className="space-y-4">
                 <div>
@@ -387,7 +525,6 @@ export default function UserEditPage({ params }: UserEditPageProps) {
                   </p>
                 </div>
 
-                {/* Quick Subscription Actions */}
                 <div className="grid grid-cols-3 gap-2">
                   <Button
                     type="button"
