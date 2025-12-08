@@ -139,10 +139,10 @@ export default function EditChapterForm({
               image.file,
               imagePath,
               token
-            ).then(result => ({
+            ).then(publicUrl => ({
               index: i,
               originalUrl: image.url,
-              ...result
+              publicUrl: publicUrl
             }))
             .catch(error => ({
               index: i,
@@ -160,11 +160,16 @@ export default function EditChapterForm({
 
         // Process results
         const successful = results
-          .filter(r => r.status === 'fulfilled' && r.value.url)
-          .map(r => (r as PromiseFulfilledResult<any>).value);
+          .filter((r): r is PromiseFulfilledResult<{ index: number; originalUrl: string; publicUrl: string }> => 
+            r.status === 'fulfilled' && 'publicUrl' in r.value && !!r.value.publicUrl
+          )
+          .map(r => r.value);
         
         const failed = results
-          .filter(r => r.status === 'rejected' || !(r as any).value?.url)
+          .filter(r => 
+            r.status === 'rejected' || 
+            (r.status === 'fulfilled' && (!('publicUrl' in r.value) || !r.value.publicUrl))
+          )
           .map((r, i) => i + 1);
 
         if (failed.length > 0 && successful.length === 0) {
@@ -190,8 +195,8 @@ export default function EditChapterForm({
           if (image.file) {
             // Find uploaded URL for this image
             const uploaded = successful.find(s => s.index === i);
-            if (uploaded && uploaded.url) {
-              finalImageUrls.push(uploaded.url);
+            if (uploaded && uploaded.publicUrl) {
+              finalImageUrls.push(uploaded.publicUrl);
             }
           } else {
             // Existing image - keep URL

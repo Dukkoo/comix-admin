@@ -97,9 +97,9 @@ export default function NewChapterForm({ mangaId, mangaTitle }: Props) {
             image.file,
             imagePath,
             token
-          ).then(result => ({
+          ).then(publicUrl => ({
             index: i,
-            ...result
+            url: publicUrl
           }))
           .catch(error => ({
             index: i,
