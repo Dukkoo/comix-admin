@@ -13,20 +13,14 @@ export const updateUserSubscription = async (
     const verifiedToken = await auth.verifyIdToken(authToken);
 
     if (!verifiedToken.admin) {
-      return {
-        error: true,
-        message: "Unauthorized access",
-      };
+      return { error: true, message: "Unauthorized access" };
     }
 
     const userRef = firestore.collection("users").doc(userId);
-    const userDoc = await userRef.get();
+    const userDoc = await userRef.get(); // 1 read
 
     if (!userDoc.exists) {
-      return {
-        error: true,
-        message: "User not found",
-      };
+      return { error: true, message: "User not found" };
     }
 
     let updateData: any = {};
@@ -48,20 +42,14 @@ export const updateUserSubscription = async (
       };
     }
 
-    await userRef.update(updateData);
+    await userRef.update(updateData); // 1 write
 
     revalidatePath("/admin/users");
 
-    return {
-      error: false,
-      message: "User subscription updated successfully",
-    };
+    return { error: false, message: "User subscription updated successfully" };
   } catch (error: any) {
     console.error("Error updating user subscription:", error);
-    return {
-      error: true,
-      message: "Failed to update user subscription",
-    };
+    return { error: true, message: "Failed to update user subscription" };
   }
 };
 
@@ -74,71 +62,62 @@ export const updateUserXP = async (
     const verifiedToken = await auth.verifyIdToken(authToken);
 
     if (!verifiedToken.admin) {
-      return {
-        error: true,
-        message: "Unauthorized access",
-      };
+      return { error: true, message: "Unauthorized access" };
     }
 
     const userRef = firestore.collection("users").doc(userId);
-    const userDoc = await userRef.get();
+    const userDoc = await userRef.get(); // 1 read
 
     if (!userDoc.exists) {
-      return {
-        error: true,
-        message: "User not found",
-      };
+      return { error: true, message: "User not found" };
     }
 
     await userRef.update({
       xp: Math.max(0, xpAmount),
       updatedAt: new Date(),
-    });
+    }); // 1 write
 
     revalidatePath("/admin/users");
 
-    return {
-      error: false,
-      message: "User XP updated successfully",
-    };
+    return { error: false, message: "User XP updated successfully" };
   } catch (error: any) {
     console.error("Error updating user XP:", error);
-    return {
-      error: true,
-      message: "Failed to update user XP",
-    };
+    return { error: true, message: "Failed to update user XP" };
   }
 };
 
+// ========================================
+// OPTIMIZED: count() query ашиглах (3 reads only!)
+// ========================================
 export const getUserStats = async (authToken: string) => {
   try {
     const verifiedToken = await auth.verifyIdToken(authToken);
 
     if (!verifiedToken.admin) {
-      return {
-        error: true,
-        message: "Unauthorized access",
-      };
+      return { error: true, message: "Unauthorized access" };
     }
 
-    const usersSnapshot = await firestore.collection("users").get();
-    const users = usersSnapshot.docs.map(doc => doc.data());
+    // Count queries - 1 read тус бүр
+    const [totalSnapshot, subscribedSnapshot] = await Promise.all([
+      firestore.collection("users").count().get(),
+      firestore.collection("users")
+        .where("subscriptionStatus", "==", "subscribed")
+        .count()
+        .get(),
+    ]);
+
+    const totalUsers = totalSnapshot.data().count;
+    const subscribedUsers = subscribedSnapshot.data().count;
 
     const stats = {
-      totalUsers: users.length,
-      subscribedUsers: users.filter(u => u.subscriptionStatus === "subscribed").length,
-      notSubscribedUsers: users.filter(u => u.subscriptionStatus === "not_subscribed" || !u.subscriptionStatus).length,
+      totalUsers,
+      subscribedUsers,
+      notSubscribedUsers: totalUsers - subscribedUsers,
     };
 
-    return {
-      error: false,
-      data: stats,
-    };
+    return { error: false, data: stats };
   } catch (error: any) {
     console.error("Error fetching user stats:", error);
-    return {
-      error: true,
-      message: "Failed to fetch user stats",
-    };
+    return { error: true, message: "Failed to fetch user stats" };
   }
 };

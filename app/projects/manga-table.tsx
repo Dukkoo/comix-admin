@@ -28,10 +28,14 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useState, useEffect } from "react";
 import { fetchMangas, deleteManga, Manga } from "@/utils/manga-api";
 
-export default function MangaTable({ page = 1 }: { page?: number }) {
+export default function MangaTable() {
   const auth = useAuth();
   const router = useRouter();
   const searchParams = useSearchParams();
+  
+  // searchParams-аас page авах
+  const page = parseInt(searchParams.get('page') || '1');
+  
   const [mangas, setMangas] = useState<Manga[]>([]);
   const [totalPages, setTotalPages] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -58,6 +62,7 @@ export default function MangaTable({ page = 1 }: { page?: number }) {
     return types[type] || 'Манга';
   };
 
+  // Debounce search term
   useEffect(() => {
     const timer = setTimeout(() => {
       setDebouncedSearchTerm(searchTerm);
@@ -66,19 +71,7 @@ export default function MangaTable({ page = 1 }: { page?: number }) {
     return () => clearTimeout(timer);
   }, [searchTerm]);
 
-  useEffect(() => {
-    const params = new URLSearchParams(searchParams);
-    if (debouncedSearchTerm) {
-      params.set('search', debouncedSearchTerm);
-    } else {
-      params.delete('search');
-    }
-    params.delete('page');
-    
-    const newUrl = params.toString() ? `/projects?${params.toString()}` : '/projects';
-    router.replace(newUrl);
-  }, [debouncedSearchTerm, router, searchParams]);
-
+  // Load mangas - page болон debouncedSearchTerm өөрчлөгдөхөд дахин ачаалах
   useEffect(() => {
     const loadMangas = async () => {
       setLoading(true);
@@ -98,6 +91,12 @@ export default function MangaTable({ page = 1 }: { page?: number }) {
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
+    // Search хийхэд page 1 рүү буцах
+    const params = new URLSearchParams();
+    if (searchTerm) {
+      params.set('search', searchTerm);
+    }
+    router.push(`/projects?${params.toString()}`);
   };
 
   const showDeleteDialog = (mangaId: string, title: string) => {
@@ -159,6 +158,12 @@ export default function MangaTable({ page = 1 }: { page?: number }) {
     }
   };
 
+  const clearSearch = () => {
+    setSearchTerm('');
+    setDebouncedSearchTerm('');
+    router.push('/projects');
+  };
+
   if (loading) {
     return <MangaTableSkeleton />;
   }
@@ -206,10 +211,7 @@ export default function MangaTable({ page = 1 }: { page?: number }) {
                 </p>
                 {debouncedSearchTerm && (
                   <Button 
-                    onClick={() => {
-                      setSearchTerm('');
-                      setDebouncedSearchTerm('');
-                    }}
+                    onClick={clearSearch}
                     className="bg-zinc-700 hover:bg-cyan-600 text-white px-8 py-3 rounded-xl cursor-pointer"
                   >
                     Хайлтыг арилгах

@@ -46,250 +46,146 @@ export async function GET(request: NextRequest) {
   try {
     const authHeader = request.headers.get("authorization");
     if (!authHeader?.startsWith("Bearer ")) {
-      return NextResponse.json(
-        { error: "Unauthorized" },
-        { status: 401 }
-      );
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
     const token = authHeader.split(" ")[1];
     const verifiedToken = await auth.verifyIdToken(token);
 
     if (!verifiedToken.admin) {
-      return NextResponse.json(
-        { error: "Admin access required" },
-        { status: 403 }
-      );
+      return NextResponse.json({ error: "Admin access required" }, { status: 403 });
     }
 
     const { searchParams } = new URL(request.url);
     const page = parseInt(searchParams.get("page") || "1");
     const limit = parseInt(searchParams.get("limit") || "25");
-    const search = searchParams.get("search") || "";
+    const search = searchParams.get("search")?.trim() || "";
     const searchType = searchParams.get("searchType") || "";
     const status = searchParams.get("status") || "all";
-    const sortBy = searchParams.get("sortBy") || "createdAt";
-    const sortOrder = searchParams.get("sortOrder") || "desc";
 
     // ========================================
-    // OPTIMIZATION 1: Firestore Query-based Pagination
-    // Зөвхөн хэрэгтэй хуудасны өгөгдлийг унших
+    // BUILD QUERY
     // ========================================
     
-    let firestoreQuery = firestore.collection("users");
-    
-    // Apply status filter at query level
+    let query: FirebaseFirestore.Query = firestore.collection("users");
+    let isSearchQuery = false;
+
+    // Status filter
     if (status !== "all") {
-      firestoreQuery = firestoreQuery.where("subscriptionStatus", "==", status) as any;
+      query = query.where("subscriptionStatus", "==", status);
     }
-    
-    // Apply sorting
-    const firestoreSortBy = sortBy === 'username' ? 'username' : 
-                           sortBy === 'xp' ? 'xp' : 
-                           sortBy === 'userId' ? 'userId' : 'createdAt';
-    
-    firestoreQuery = firestoreQuery.orderBy(firestoreSortBy, sortOrder as any) as any;
-    
+
     // ========================================
-    // OPTIMIZATION 2: Search Handling
-    // Хайлт хийхдээ зөвхөн шаардлагатай документүүдийг унших
+    // SEARCH - Exact match (1-2 reads only!)
     // ========================================
     
-    let searchResults: string[] | null = null;
-    
-    if (search.trim()) {
-      const searchTerm = search.trim(); // Keep original case
+    if (search) {
+      isSearchQuery = true;
       
-      // Email search - use client-side filtering for case-insensitive
-      if (searchType === 'email' || (!searchType && searchTerm.includes('@'))) {
-        const allUsersQuery = await firestore
-          .collection("users")
-          .limit(1000)
-          .get();
-        
-        const matchedUsers = allUsersQuery.docs.filter(doc => {
-          const email = doc.data().email || '';
-          return email.toLowerCase().includes(searchTerm.toLowerCase());
-        });
-        
-        searchResults = matchedUsers.map(doc => doc.id);
-        console.log(`Email search: "${searchTerm}" found ${searchResults.length} results`);
+      // UserId exact match
+      if (searchType === "userId" || /^\d+$/.test(search)) {
+        const userIdNum = parseInt(search);
+        query = query.where("userId", "==", userIdNum);
       }
-      // UserId search - exact match works fine
-      else if (searchType === 'userId' || (!searchType && /^\d+$/.test(searchTerm))) {
-        const userIdNum = parseInt(searchTerm);
-        const userIdQuery = await firestore
-          .collection("users")
-          .where("userId", "==", userIdNum)
-          .limit(100)
-          .get();
-        
-        searchResults = userIdQuery.docs.map(doc => doc.id);
-        console.log(`UserId search: ${userIdNum} found ${searchResults.length} results`);
+      // Email exact match
+      else if (searchType === "email" || search.includes("@")) {
+        query = query.where("email", "==", search.toLowerCase());
       }
-      // Username search - use client-side filtering
-      else if (searchType === 'username' || !searchType) {
-        const allUsersQuery = await firestore
-          .collection("users")
-          .limit(1000)
-          .get();
-        
-        const matchedUsers = allUsersQuery.docs.filter(doc => {
-          const username = doc.data().username || '';
-          return username.toLowerCase().includes(searchTerm.toLowerCase());
-        });
-        
-        searchResults = matchedUsers.map(doc => doc.id);
-        console.log(`Username search: "${searchTerm}" found ${searchResults.length} results`);
-      }
-      
-      // If no results from search, return empty
-      if (searchResults && searchResults.length === 0) {
-        return NextResponse.json({
-          data: [],
-          totalPages: 0,
-          currentPage: page,
-          totalCount: 0,
-        });
+      // Default: treat as email if contains text
+      else {
+        query = query.where("email", "==", search.toLowerCase());
       }
     }
-    
-    // ========================================
-    // OPTIMIZATION 3: Pagination with limit
-    // Зөвхөн одоогийн хуудасны өгөгдөл + нийт тоо
-    // ========================================
-    
-    // Get total count efficiently
-    let totalCount = 0;
-    if (searchResults) {
-      totalCount = searchResults.length;
-    } else {
-      // Use count query (1 read only)
-      const countQuery = status !== "all" 
-        ? firestore.collection("users").where("subscriptionStatus", "==", status)
-        : firestore.collection("users");
-      
-      const countSnapshot = await countQuery.count().get();
-      totalCount = countSnapshot.data().count;
+
+    // Default sort (only when not searching)
+    if (!isSearchQuery) {
+      query = query.orderBy("createdAt", "desc");
     }
+
+    // ========================================
+    // COUNT (1 read)
+    // ========================================
     
+    const countSnapshot = await query.count().get();
+    const totalCount = countSnapshot.data().count;
     const totalPages = Math.ceil(totalCount / limit);
+
+    // ========================================
+    // PAGINATION (25 reads max)
+    // ========================================
+    
     const offset = (page - 1) * limit;
+    let paginatedQuery = query.limit(limit);
     
-    // Get paginated documents
-    let userDocs;
-    
-    if (searchResults) {
-      // For search results, fetch specific documents by ID
-      const paginatedIds = searchResults.slice(offset, offset + limit);
-      const docPromises = paginatedIds.map(id => 
-        firestore.collection("users").doc(id).get()
-      );
-      const docs = await Promise.all(docPromises);
-      userDocs = docs.filter(doc => doc.exists);
-    } else {
-      // For non-search, use normal query
-      let paginatedQuery = firestoreQuery.limit(limit);
-      
-      if (offset > 0) {
-        paginatedQuery = paginatedQuery.offset(offset) as any;
-      }
-      
-      const snapshot = await paginatedQuery.get();
-      userDocs = snapshot.docs;
+    if (offset > 0 && !isSearchQuery) {
+      paginatedQuery = paginatedQuery.offset(offset);
     }
+
+    const snapshot = await paginatedQuery.get();
+    const userDocs = snapshot.docs;
+
     // ========================================
-    // OPTIMIZATION 4: Batch Auth User Fetching
-    // Auth.getUser()-г зөвхөн шаардлагатай үед дуудах
-    // ========================================
-    
-    const userIds = userDocs.map(doc => doc.id);
-    
-    // Fetch auth users in batch (more efficient than individual calls)
-    const authUsersPromises = userIds.map(async (uid) => {
-      try {
-        return await auth.getUser(uid);
-      } catch (error) {
-        console.error(`Failed to fetch auth user ${uid}:`, error);
-        return null;
-      }
-    });
-    
-    const authUsers = await Promise.all(authUsersPromises);
-    
-    // ========================================
-    // OPTIMIZATION 5: Process Users Without Extra Writes
-    // userId үүсгэхийг хойшлуулах, зөвхөн уншихад анхаарах
+    // PROCESS USERS
     // ========================================
     
-    const processedUsers: (UserData | null)[] = await Promise.all(
-      userDocs.map(async (doc, index) => {
-        const firestoreData = doc.data();
-        const authUser = authUsers[index];
-        
-        if (!authUser) {
-          return null;
+    const users: UserData[] = userDocs.map((doc) => {
+      const data = doc.data();
+      
+      // Parse createdAt
+      let createdAt: string;
+      if (data.createdAt) {
+        if (data.createdAt.toDate) {
+          createdAt = data.createdAt.toDate().toISOString();
+        } else {
+          createdAt = data.createdAt;
         }
+      } else {
+        createdAt = new Date().toISOString();
+      }
+      
+      // Calculate subscription days left
+      let subscriptionDaysLeft: number | undefined;
+      let subscriptionStatus = data.subscriptionStatus || "not_subscribed";
+      
+      if (data.subscriptionEndDate) {
+        const endDate = new Date(data.subscriptionEndDate);
+        const now = new Date();
+        const diffTime = endDate.getTime() - now.getTime();
+        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
         
-        // Use Firestore createdAt if available
-        let createdAt: string;
-        if (firestoreData?.createdAt) {
-          if (firestoreData.createdAt.toDate) {
-            createdAt = firestoreData.createdAt.toDate().toISOString();
-          } else {
-            createdAt = firestoreData.createdAt;
+        if (diffTime <= 0) {
+          subscriptionStatus = "not_subscribed";
+          subscriptionDaysLeft = 0;
+          
+          // Update expired subscription in background
+          if (data.subscriptionStatus === "subscribed") {
+            firestore.collection("users").doc(doc.id).update({
+              subscriptionStatus: "not_subscribed",
+              updatedAt: new Date().toISOString(),
+            }).catch(err => console.error(`Failed to update expired subscription for ${doc.id}`));
           }
         } else {
-          createdAt = authUser.metadata.creationTime || new Date().toISOString();
+          subscriptionStatus = "subscribed";
+          subscriptionDaysLeft = diffDays;
         }
-        
-        // Calculate subscription days left
-        let subscriptionDaysLeft: number | undefined;
-        let subscriptionStatus = firestoreData?.subscriptionStatus || "not_subscribed";
-        
-        if (firestoreData?.subscriptionEndDate) {
-          const endDate = new Date(firestoreData.subscriptionEndDate);
-          const now = new Date();
-          const diffTime = endDate.getTime() - now.getTime();
-          const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-          
-          if (diffTime <= 0) {
-            subscriptionStatus = "not_subscribed";
-            subscriptionDaysLeft = 0;
-            
-            // Mark for update in background (don't await)
-            if (firestoreData.subscriptionStatus === "subscribed") {
-              firestore.collection("users").doc(doc.id).update({
-                subscriptionStatus: "not_subscribed",
-                updatedAt: new Date().toISOString(),
-              }).catch(err => console.error(`Failed to update expired subscription for ${doc.id}`));
-            }
-          } else {
-            subscriptionStatus = "subscribed";
-            subscriptionDaysLeft = diffDays;
-          }
-        }
-        
-        return {
-          id: authUser.uid,
-          userId: firestoreData?.userId || undefined,
-          username: firestoreData?.username || authUser.displayName || authUser.email?.split('@')[0] || 'Unknown',
-          email: authUser.email || 'No email',
-          xp: firestoreData?.xp || 0,
-          subscriptionStatus,
-          subscriptionEndDate: firestoreData?.subscriptionEndDate || null,
-          subscriptionDaysLeft,
-          createdAt,
-          lastLogin: authUser.metadata.lastSignInTime || null,
-        };
-      })
-    );
-    
-    // Filter out null values
-    const validUsers = processedUsers.filter(user => user !== null) as UserData[];
+      }
+
+      return {
+        id: doc.id,
+        userId: data.userId,
+        username: data.username || data.displayName || "Unknown",
+        email: data.email || "",
+        xp: data.xp || 0,
+        subscriptionStatus,
+        subscriptionEndDate: data.subscriptionEndDate || null,
+        subscriptionDaysLeft,
+        createdAt,
+        lastLogin: data.lastLogin || null,
+      };
+    });
 
     return NextResponse.json({
-      data: validUsers,
+      data: users,
       totalPages,
       currentPage: page,
       totalCount,
@@ -297,10 +193,7 @@ export async function GET(request: NextRequest) {
 
   } catch (error) {
     console.error("Error fetching users:", error);
-    return NextResponse.json(
-      { error: "Internal server error" },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }
 
