@@ -16,7 +16,7 @@ export type ImageUpload = {
   id: string;
   url: string;
   file?: File;
-  preview?: string; // Add preview property for better type safety
+  preview?: string;
 };
 
 type Props = {

@@ -24,106 +24,118 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // Get all users from Firebase Authentication
-    const authUsers = await auth.listUsers(1000);
+    // ========================================
+    // OPTIMIZATION 1: Use COUNT queries (1 read each)
+    // ========================================
     
-    // Get all user documents from Firestore
-    const userDocsSnapshot = await firestore.collection("users").get();
-    const userDocs: { [key: string]: any } = {};
-    userDocsSnapshot.docs.forEach(doc => {
-      userDocs[doc.id] = doc.data();
-    });
+    // Total users count
+    const totalUsersCount = await firestore
+      .collection("users")
+      .count()
+      .get();
+    const totalUsers = totalUsersCount.data().count;
 
-    // Get manga data from database
-    const mangaSnapshot = await firestore.collection("mangas").get();
-    const totalMangas = mangaSnapshot.size;
+    // Subscribed users count
+    const subscribedCountSnapshot = await firestore
+      .collection("users")
+      .where("subscriptionStatus", "==", "subscribed")
+      .count()
+      .get();
+    const subscribedCount = subscribedCountSnapshot.data().count;
+
+    // Free users
+    const freeCount = totalUsers - subscribedCount;
+
+    // Total mangas count
+    const totalMangasCount = await firestore
+      .collection("mangas")
+      .count()
+      .get();
+    const totalMangas = totalMangasCount.data().count;
+
+    // ========================================
+    // OPTIMIZATION 2: Aggregate chapters from manga documents
+    // Instead of querying each manga's subcollection, use stored counts
+    // ========================================
     
-    // Calculate total chapters - check multiple possibilities
     let totalChapters = 0;
     
-    // Method 1: Check if chapters are stored as subcollections under each manga
-    for (const mangaDoc of mangaSnapshot.docs) {
-      try {
-        const chaptersSnapshot = await firestore
-          .collection("mangas")
-          .doc(mangaDoc.id)
-          .collection("chapters")
-          .get();
-        totalChapters += chaptersSnapshot.size;
-      } catch (error) {
-        // Silent fail - try next method
-      }
-    }
+    // Get only the chapters field from each manga (minimal reads)
+    const mangaSnapshot = await firestore
+      .collection("mangas")
+      .select("chapters") // Only get chapters field, not full documents
+      .get();
     
-    // Method 2: If no subcollections found, check if chapters count is stored as a field
-    if (totalChapters === 0) {
-      mangaSnapshot.docs.forEach(mangaDoc => {
-        const mangaData = mangaDoc.data();
-        const chaptersCount = mangaData.chapters || mangaData.chaptersCount || mangaData.totalChapters || 0;
-        totalChapters += chaptersCount;
+    mangaSnapshot.docs.forEach(mangaDoc => {
+      const data = mangaDoc.data();
+      totalChapters += data.chapters || 0;
+    });
+
+    // ========================================
+    // OPTIMIZATION 3: Sample-based XP calculation
+    // Instead of getting all users, sample 100 for average XP
+    // ========================================
+    
+    let averageXP = 0;
+    
+    if (totalUsers > 0) {
+      // Sample up to 100 users for XP calculation
+      const sampleSize = Math.min(100, totalUsers);
+      const xpSampleSnapshot = await firestore
+        .collection("users")
+        .select("xp")
+        .limit(sampleSize)
+        .get();
+      
+      let totalSampleXP = 0;
+      xpSampleSnapshot.docs.forEach(doc => {
+        totalSampleXP += doc.data().xp || 0;
       });
+      
+      averageXP = Math.round(totalSampleXP / sampleSize);
     }
+
+    // ========================================
+    // OPTIMIZATION 4: Weekly data from cached/aggregated source
+    // For production, consider caching this or using Cloud Functions
+    // ========================================
     
-    // Method 3: Still try the standalone chapters collection (keep as fallback)
-    if (totalChapters === 0) {
-      const chaptersSnapshot = await firestore.collection("chapters").get();
-      totalChapters = chaptersSnapshot.size;
-    }
-
-    // Process user data
-    let subscribedCount = 0;
-    let freeCount = 0;
-    let totalXP = 0;
     const weeklyNewUsers: { [key: string]: number } = {};
-
-    // Initialize last 8 weeks
     const now = new Date();
+    
+    // Initialize last 8 weeks
     for (let i = 7; i >= 0; i--) {
-      const weekStart = new Date(now);
-      weekStart.setDate(now.getDate() - (i * 7));
       const weekKey = `Week ${8 - i}`;
       weeklyNewUsers[weekKey] = 0;
     }
 
-    authUsers.users.forEach(authUser => {
-      const firestoreData = userDocs[authUser.uid] || {};
-      
-      // Count subscription status
-      if (firestoreData?.subscriptionStatus === "subscribed") {
-        // Check if subscription is still valid
-        if (firestoreData?.subscriptionEndDate) {
-          const endDate = new Date(firestoreData.subscriptionEndDate);
-          if (endDate > now) {
-            subscribedCount++;
-          } else {
-            freeCount++;
+    // Get users created in last 8 weeks only (not all users)
+    const eightWeeksAgo = new Date(now);
+    eightWeeksAgo.setDate(now.getDate() - (8 * 7));
+    
+    const recentUsersSnapshot = await firestore
+      .collection("users")
+      .where("createdAt", ">=", eightWeeksAgo.toISOString())
+      .select("createdAt")
+      .get();
+    
+    recentUsersSnapshot.docs.forEach(doc => {
+      const data = doc.data();
+      if (data.createdAt) {
+        const creationDate = new Date(data.createdAt);
+        const weeksAgo = Math.floor((now.getTime() - creationDate.getTime()) / (1000 * 60 * 60 * 24 * 7));
+        
+        if (weeksAgo < 8) {
+          const weekKey = `Week ${8 - weeksAgo}`;
+          if (weeklyNewUsers[weekKey] !== undefined) {
+            weeklyNewUsers[weekKey]++;
           }
-        } else {
-          freeCount++;
-        }
-      } else {
-        freeCount++;
-      }
-
-      // Calculate total XP
-      totalXP += firestoreData?.xp || 0;
-
-      // Count weekly new users
-      const creationDate = new Date(authUser.metadata.creationTime);
-      const weeksAgo = Math.floor((now.getTime() - creationDate.getTime()) / (1000 * 60 * 60 * 24 * 7));
-      
-      if (weeksAgo < 8) {
-        const weekKey = `Week ${8 - weeksAgo}`;
-        if (weeklyNewUsers[weekKey] !== undefined) {
-          weeklyNewUsers[weekKey]++;
         }
       }
     });
 
-    // Calculate some additional stats
-    const totalUsers = authUsers.users.length;
+    // Calculate subscription rate
     const subscriptionRate = totalUsers > 0 ? (subscribedCount / totalUsers) * 100 : 0;
-    const averageXP = totalUsers > 0 ? Math.round(totalXP / totalUsers) : 0;
 
     // Prepare response data
     const analyticsData = {
@@ -156,3 +168,10 @@ export async function GET(request: NextRequest) {
     );
   }
 }
+
+// ========================================
+// ADDITIONAL OPTIMIZATION: Cache the results
+// Consider adding Next.js revalidation
+// ========================================
+
+export const revalidate = 300; // Cache for 5 minutes

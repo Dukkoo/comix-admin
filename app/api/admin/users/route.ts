@@ -71,227 +71,215 @@ export async function GET(request: NextRequest) {
     const sortBy = searchParams.get("sortBy") || "createdAt";
     const sortOrder = searchParams.get("sortOrder") || "desc";
 
-    const offset = (page - 1) * limit;
-
-    // Get all users from Firebase Authentication
-    const authUsers = await auth.listUsers(1000);
+    // ========================================
+    // OPTIMIZATION 1: Firestore Query-based Pagination
+    // Зөвхөн хэрэгтэй хуудасны өгөгдлийг унших
+    // ========================================
     
-    // Get all user documents from Firestore
-    const userDocsSnapshot = await firestore.collection("users").get();
-    const userDocs: { [key: string]: any } = {};
-    userDocsSnapshot.docs.forEach(doc => {
-      userDocs[doc.id] = doc.data();
-    });
-
-    // Combine auth users with Firestore data
-    const allUsers: UserData[] = await Promise.all(
-      authUsers.users.map(async (authUser) => {
-        const firestoreData = userDocs[authUser.uid] || {};
+    let firestoreQuery = firestore.collection("users");
+    
+    // Apply status filter at query level
+    if (status !== "all") {
+      firestoreQuery = firestoreQuery.where("subscriptionStatus", "==", status) as any;
+    }
+    
+    // Apply sorting
+    const firestoreSortBy = sortBy === 'username' ? 'username' : 
+                           sortBy === 'xp' ? 'xp' : 
+                           sortBy === 'userId' ? 'userId' : 'createdAt';
+    
+    firestoreQuery = firestoreQuery.orderBy(firestoreSortBy, sortOrder as any) as any;
+    
+    // ========================================
+    // OPTIMIZATION 2: Search Handling
+    // Хайлт хийхдээ зөвхөн шаардлагатай документүүдийг унших
+    // ========================================
+    
+    let searchResults: string[] | null = null;
+    
+    if (search.trim()) {
+      const searchTerm = search.trim().toLowerCase();
+      
+      // Email search
+      if (searchType === 'email' || (!searchType && searchTerm.includes('@'))) {
+        const emailQuery = await firestore
+          .collection("users")
+          .where("email", ">=", searchTerm)
+          .where("email", "<=", searchTerm + '\uf8ff')
+          .limit(100)
+          .get();
         
-        // Auto-generate userId if missing
-        let userId = firestoreData?.userId;
-        if (!userId) {
-          try {
-            userId = await generateUniqueUserId();
-            const userRef = firestore.collection("users").doc(authUser.uid);
-            
-            if (await userRef.get().then(doc => doc.exists)) {
-              await userRef.update({ 
-                userId, 
-                updatedAt: new Date().toISOString() 
-              });
-            } else {
-              await userRef.set({
-                userId,
-                username: authUser.displayName || authUser.email?.split('@')[0] || 'Unknown',
-                email: authUser.email || '',
-                xp: 0,
-                subscriptionStatus: "not_subscribed",
-                createdAt: authUser.metadata.creationTime || new Date().toISOString(),
-                updatedAt: new Date().toISOString(),
-              });
-            }
-            console.log(`✅ Generated userId ${userId} for ${authUser.email}`);
-          } catch (error) {
-            console.error(`❌ Failed to generate userId for ${authUser.email}:`, error);
-          }
+        searchResults = emailQuery.docs.map(doc => doc.id);
+      }
+      // UserId search
+      else if (searchType === 'userId' || (!searchType && /^\d+$/.test(searchTerm))) {
+        const userIdNum = parseInt(searchTerm);
+        const userIdQuery = await firestore
+          .collection("users")
+          .where("userId", "==", userIdNum)
+          .limit(100)
+          .get();
+        
+        searchResults = userIdQuery.docs.map(doc => doc.id);
+      }
+      // Username search
+      else if (searchType === 'username' || !searchType) {
+        const usernameQuery = await firestore
+          .collection("users")
+          .where("username", ">=", searchTerm)
+          .where("username", "<=", searchTerm + '\uf8ff')
+          .limit(100)
+          .get();
+        
+        searchResults = usernameQuery.docs.map(doc => doc.id);
+      }
+      
+      // If no results from search, return empty
+      if (searchResults && searchResults.length === 0) {
+        return NextResponse.json({
+          data: [],
+          totalPages: 0,
+          currentPage: page,
+          totalCount: 0,
+        });
+      }
+    }
+    
+    // ========================================
+    // OPTIMIZATION 3: Pagination with limit
+    // Зөвхөн одоогийн хуудасны өгөгдөл + нийт тоо
+    // ========================================
+    
+    // Get total count efficiently
+    let totalCount = 0;
+    if (searchResults) {
+      totalCount = searchResults.length;
+    } else {
+      // Use count query (1 read only)
+      const countQuery = status !== "all" 
+        ? firestore.collection("users").where("subscriptionStatus", "==", status)
+        : firestore.collection("users");
+      
+      const countSnapshot = await countQuery.count().get();
+      totalCount = countSnapshot.data().count;
+    }
+    
+    const totalPages = Math.ceil(totalCount / limit);
+    const offset = (page - 1) * limit;
+    
+    // Get paginated documents
+    let paginatedQuery = firestoreQuery.limit(limit);
+    
+    if (offset > 0 && !searchResults) {
+      paginatedQuery = paginatedQuery.offset(offset) as any;
+    }
+    
+    const snapshot = await paginatedQuery.get();
+    
+    // ========================================
+    // OPTIMIZATION 4: Batch Auth User Fetching
+    // Auth.getUser()-г зөвхөн шаардлагатай үед дуудах
+    // ========================================
+    
+    const userDocs = snapshot.docs;
+    const userIds = userDocs.map(doc => doc.id);
+    
+    // Fetch auth users in batch (more efficient than individual calls)
+    const authUsersPromises = userIds.map(async (uid) => {
+      try {
+        return await auth.getUser(uid);
+      } catch (error) {
+        console.error(`Failed to fetch auth user ${uid}:`, error);
+        return null;
+      }
+    });
+    
+    const authUsers = await Promise.all(authUsersPromises);
+    
+    // ========================================
+    // OPTIMIZATION 5: Process Users Without Extra Writes
+    // userId үүсгэхийг хойшлуулах, зөвхөн уншихад анхаарах
+    // ========================================
+    
+    const processedUsers: (UserData | null)[] = await Promise.all(
+      userDocs.map(async (doc, index) => {
+        const firestoreData = doc.data();
+        const authUser = authUsers[index];
+        
+        if (!authUser) {
+          return null;
         }
         
-        // CRITICAL: Use Firestore createdAt if available, fallback to Auth metadata
-        // This ensures proper sorting by actual registration date
+        // Use Firestore createdAt if available
         let createdAt: string;
         if (firestoreData?.createdAt) {
-          // Firestore has createdAt - use it (most accurate)
           if (firestoreData.createdAt.toDate) {
-            // Firestore Timestamp
             createdAt = firestoreData.createdAt.toDate().toISOString();
           } else {
-            // String format
             createdAt = firestoreData.createdAt;
           }
         } else {
-          // No Firestore createdAt - use Firebase Auth as fallback
           createdAt = authUser.metadata.creationTime || new Date().toISOString();
+        }
+        
+        // Calculate subscription days left
+        let subscriptionDaysLeft: number | undefined;
+        let subscriptionStatus = firestoreData?.subscriptionStatus || "not_subscribed";
+        
+        if (firestoreData?.subscriptionEndDate) {
+          const endDate = new Date(firestoreData.subscriptionEndDate);
+          const now = new Date();
+          const diffTime = endDate.getTime() - now.getTime();
+          const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
           
-          // Save this to Firestore for future consistency
-          try {
-            const userRef = firestore.collection("users").doc(authUser.uid);
-            if (await userRef.get().then(doc => doc.exists)) {
-              await userRef.update({ 
-                createdAt,
-                updatedAt: new Date().toISOString()
-              });
+          if (diffTime <= 0) {
+            subscriptionStatus = "not_subscribed";
+            subscriptionDaysLeft = 0;
+            
+            // Mark for update in background (don't await)
+            if (firestoreData.subscriptionStatus === "subscribed") {
+              firestore.collection("users").doc(doc.id).update({
+                subscriptionStatus: "not_subscribed",
+                updatedAt: new Date().toISOString(),
+              }).catch(err => console.error(`Failed to update expired subscription for ${doc.id}`));
             }
-          } catch (error) {
-            console.error(`❌ Failed to save createdAt for ${authUser.email}`);
+          } else {
+            subscriptionStatus = "subscribed";
+            subscriptionDaysLeft = diffDays;
           }
         }
         
         return {
           id: authUser.uid,
-          userId,
+          userId: firestoreData?.userId || undefined,
           username: firestoreData?.username || authUser.displayName || authUser.email?.split('@')[0] || 'Unknown',
           email: authUser.email || 'No email',
           xp: firestoreData?.xp || 0,
-          subscriptionStatus: firestoreData?.subscriptionStatus || "not_subscribed",
+          subscriptionStatus,
           subscriptionEndDate: firestoreData?.subscriptionEndDate || null,
+          subscriptionDaysLeft,
           createdAt,
           lastLogin: authUser.metadata.lastSignInTime || null,
         };
       })
     );
-
-    // Apply search filter
-    let filteredUsers = allUsers;
-    if (search.trim()) {
-      const searchTerm = search.trim().toLowerCase();
-      
-      if (searchType === 'email') {
-        filteredUsers = allUsers.filter(user => 
-          user.email?.toLowerCase().includes(searchTerm)
-        );
-      } else if (searchType === 'userId' && /^\d+$/.test(searchTerm)) {
-        filteredUsers = allUsers.filter(user => 
-          user.userId && user.userId.toString().includes(searchTerm)
-        );
-      } else if (searchType === 'username') {
-        filteredUsers = allUsers.filter(user =>
-          user.username?.toLowerCase().includes(searchTerm)
-        );
-      } else {
-        // Auto-detect
-        if (searchTerm.includes('@')) {
-          filteredUsers = allUsers.filter(user => 
-            user.email?.toLowerCase().includes(searchTerm)
-          );
-        } else if (/^\d+$/.test(searchTerm)) {
-          filteredUsers = allUsers.filter(user => 
-            user.userId && user.userId.toString().includes(searchTerm)
-          );
-        } else {
-          filteredUsers = allUsers.filter(user =>
-            user.id.toLowerCase().includes(searchTerm) ||
-            user.username?.toLowerCase().includes(searchTerm)
-          );
-        }
-      }
+    
+    // Filter out null values
+    const validUsers = processedUsers.filter(user => user !== null) as UserData[];
+    
+    // Apply search filter if needed (for non-indexed searches)
+    let finalUsers = validUsers;
+    if (searchResults) {
+      finalUsers = validUsers.filter(user => searchResults.includes(user.id));
     }
-
-    // Calculate subscription days left
-    const processedUsers = await Promise.all(filteredUsers.map(async (user) => {
-      let subscriptionDaysLeft: number | undefined;
-      let subscriptionStatus = user.subscriptionStatus || "not_subscribed";
-      
-      if (user.subscriptionEndDate) {
-        const endDate = new Date(user.subscriptionEndDate);
-        const now = new Date();
-        const diffTime = endDate.getTime() - now.getTime();
-        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-        
-        if (diffTime <= 0) {
-          if (user.subscriptionStatus === "subscribed") {
-            subscriptionStatus = "not_subscribed";
-            subscriptionDaysLeft = 0;
-            
-            try {
-              const userRef = firestore.collection("users").doc(user.id);
-              await userRef.update({
-                subscriptionStatus: "not_subscribed",
-                updatedAt: new Date().toISOString(),
-              });
-            } catch (error) {
-              console.warn(`Failed to update expired subscription for user ${user.id}`);
-            }
-          } else {
-            subscriptionStatus = "not_subscribed";
-            subscriptionDaysLeft = 0;
-          }
-        } else {
-          subscriptionStatus = "subscribed";
-          subscriptionDaysLeft = diffDays;
-        }
-      }
-
-      return {
-        ...user,
-        subscriptionStatus,
-        subscriptionDaysLeft,
-        xp: user.xp || 0
-      };
-    }));
-
-    // Apply status filter
-    if (status !== "all") {
-      filteredUsers = processedUsers.filter(user => user.subscriptionStatus === status);
-    } else {
-      filteredUsers = processedUsers;
+    
+    // Handle pagination for search results
+    if (searchResults && offset > 0) {
+      finalUsers = finalUsers.slice(offset, offset + limit);
     }
-
-    // SORTING - Fixed to properly sort by creation date
-    filteredUsers.sort((a, b) => {
-      let aValue: any;
-      let bValue: any;
-
-      if (sortBy === 'createdAt') {
-        // Parse dates properly
-        const aDate = new Date(a.createdAt);
-        const bDate = new Date(b.createdAt);
-        
-        // Validate dates
-        aValue = isNaN(aDate.getTime()) ? 0 : aDate.getTime();
-        bValue = isNaN(bDate.getTime()) ? 0 : bDate.getTime();
-        
-        // Debug log for troubleshooting
-        if (sortOrder === 'desc') {
-          console.log(`Sorting: ${a.email} (${new Date(aValue).toLocaleDateString()}) vs ${b.email} (${new Date(bValue).toLocaleDateString()})`);
-        }
-      } else if (sortBy === 'lastLogin') {
-        aValue = a.lastLogin ? new Date(a.lastLogin).getTime() : 0;
-        bValue = b.lastLogin ? new Date(b.lastLogin).getTime() : 0;
-      } else if (sortBy === 'xp') {
-        aValue = a.xp || 0;
-        bValue = b.xp || 0;
-      } else if (sortBy === 'userId') {
-        aValue = a.userId || 0;
-        bValue = b.userId || 0;
-      } else {
-        aValue = a.username?.toLowerCase() || '';
-        bValue = b.username?.toLowerCase() || '';
-      }
-
-      if (sortOrder === 'desc') {
-        return bValue > aValue ? 1 : bValue < aValue ? -1 : 0;
-      } else {
-        return aValue > bValue ? 1 : aValue < bValue ? -1 : 0;
-      }
-    });
-
-    const totalCount = filteredUsers.length;
-    const totalPages = Math.ceil(totalCount / limit);
-    const paginatedUsers = filteredUsers.slice(offset, offset + limit);
 
     return NextResponse.json({
-      data: paginatedUsers,
+      data: finalUsers,
       totalPages,
       currentPage: page,
       totalCount,
@@ -306,7 +294,6 @@ export async function GET(request: NextRequest) {
   }
 }
 
-// PATCH endpoint stays the same...
 export async function PATCH(request: NextRequest) {
   try {
     const authHeader = request.headers.get("authorization");
@@ -327,6 +314,7 @@ export async function PATCH(request: NextRequest) {
       return NextResponse.json({ error: "User ID is required" }, { status: 400 });
     }
 
+    // Verify user exists
     try {
       await auth.getUser(userId);
     } catch (error) {
@@ -401,7 +389,15 @@ export async function PATCH(request: NextRequest) {
         await userRef.update(updateData);
       } else {
         const authUser = await auth.getUser(userId);
-        const newUserId = await generateUniqueUserId();
+        
+        // Generate userId only when creating new document
+        let newUserId: number | undefined;
+        try {
+          newUserId = await generateUniqueUserId();
+        } catch (error) {
+          console.error("Failed to generate userId:", error);
+        }
+        
         await userRef.set({
           userId: newUserId,
           username: authUser.displayName || authUser.email?.split('@')[0] || 'Unknown',

@@ -10,7 +10,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { toast } from "sonner";
 import { createChapter, saveChapterImages } from "./actions";
-import { uploadToR2Server } from "@/app/actions/upload";
+import { uploadImageDirectToR2 } from "@/lib/upload-direct";
 
 type Props = {
   mangaId: string;
@@ -21,13 +21,12 @@ export default function NewChapterForm({ mangaId, mangaTitle }: Props) {
   const auth = useAuth();
   const router = useRouter();
   const [loading, setLoading] = useState(false);
-  const [chapterNumber, setChapterNumber] = useState<string>(""); // Changed to string for better control
+  const [chapterNumber, setChapterNumber] = useState<string>("");
   const [chapterImages, setChapterImages] = useState<ImageUpload[]>([]);
 
   const handleChapterNumberChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value;
     
-    // Allow empty string or valid numbers (including 0)
     if (value === "" || /^\d+$/.test(value)) {
       setChapterNumber(value);
     }
@@ -48,7 +47,6 @@ export default function NewChapterForm({ mangaId, mangaTitle }: Props) {
 
       const chapterNum = parseInt(chapterNumber);
 
-      // Allow chapter 0 and above
       if (chapterNumber === "" || isNaN(chapterNum) || chapterNum < 0) {
         toast.error("Бүлгийн дугаар оруулна уу (0-с эхлэх боломжтой)");
         setLoading(false);
@@ -84,7 +82,7 @@ export default function NewChapterForm({ mangaId, mangaTitle }: Props) {
       toast.dismiss(loadingToast);
       const uploadToast = toast.loading(`${chapterImages.length} зураг байршуулж байна...`);
 
-      // Upload images to R2 with WebP conversion
+      // Upload images DIRECTLY to R2 (NO VERCEL BANDWIDTH!)
       const uploadPromises: Promise<{ index: number; url?: string; error?: string }>[] = [];
       
       for (let i = 0; i < chapterImages.length; i++) {
@@ -94,17 +92,19 @@ export default function NewChapterForm({ mangaId, mangaTitle }: Props) {
           const cleanFileName = image.file.name.replace(/[^a-zA-Z0-9.-]/g, '_');
           const imagePath = `mangas/${mangaId}/chapters/${chapterNum}/${timestamp}-page-${i + 1}-${cleanFileName}`;
           
-          // Convert file to ArrayBuffer and upload (Sharp will convert to WebP)
-          const uploadPromise = image.file.arrayBuffer()
-            .then(arrayBuffer => uploadToR2Server(arrayBuffer, imagePath, image.file!.type))
-            .then(result => ({
-              index: i,
-              ...result
-            }))
-            .catch(error => ({
-              index: i,
-              error: error instanceof Error ? error.message : "Upload failed"
-            }));
+          // Direct upload to R2 with client-side WebP conversion
+          const uploadPromise = uploadImageDirectToR2(
+            image.file,
+            imagePath,
+            token
+          ).then(result => ({
+            index: i,
+            ...result
+          }))
+          .catch(error => ({
+            index: i,
+            error: error instanceof Error ? error.message : "Upload failed"
+          }));
           
           uploadPromises.push(uploadPromise);
         }
@@ -240,7 +240,7 @@ export default function NewChapterForm({ mangaId, mangaTitle }: Props) {
                     <div className="flex items-start gap-2 bg-cyan-500/10 border border-cyan-500/20 rounded-lg p-3">
                       <div className="text-cyan-400 text-xs flex-shrink-0 mt-0.5">ℹ️</div>
                       <div className="text-xs text-cyan-300">
-                        Webp болгож хөрвүүлнэ. 
+                        Таны browser дээр WebP болгож хөрвүүлнэ (Vercel bandwidth хэмнэнэ).
                       </div>
                     </div>
                     

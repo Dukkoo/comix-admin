@@ -10,7 +10,8 @@ import { useRouter } from "next/navigation";
 import { useState, useEffect } from "react";
 import { toast } from "sonner";
 import { updateChapter, saveChapterImages } from "./actions";
-import { uploadToR2Server, deleteFromR2Server } from "@/app/actions/upload";
+import { uploadImageDirectToR2 } from "@/lib/upload-direct";
+import { deleteFromR2Server } from "@/app/actions/upload";
 
 type Props = {
   mangaId: string;
@@ -122,30 +123,32 @@ export default function EditChapterForm({
         toast.dismiss(loadingToast);
         const uploadToast = toast.loading(`Uploading ${newImages.length} new images...`);
 
-        // Upload new images with error handling
+        // Upload new images DIRECTLY to R2 (NO VERCEL BANDWIDTH!)
         const uploadPromises: Promise<{ index: number; url?: string; error?: string }>[] = [];
         
         for (let i = 0; i < chapterImages.length; i++) {
           const image = chapterImages[i];
           
           if (image.file) {
-            // New image - upload to R2 (Sharp will convert to WebP)
+            // New image - upload directly to R2 with client-side WebP conversion
             const timestamp = Date.now();
             const cleanFileName = image.file.name.replace(/[^a-zA-Z0-9.-]/g, '_');
             const imagePath = `mangas/${mangaId}/chapters/${chapterNumber}/${timestamp}-page-${i + 1}-${cleanFileName}`;
             
-            const uploadPromise = image.file.arrayBuffer()
-              .then(arrayBuffer => uploadToR2Server(arrayBuffer, imagePath, image.file!.type))
-              .then(result => ({
-                index: i,
-                originalUrl: image.url,
-                ...result
-              }))
-              .catch(error => ({
-                index: i,
-                originalUrl: image.url,
-                error: error instanceof Error ? error.message : "Upload failed"
-              }));
+            const uploadPromise = uploadImageDirectToR2(
+              image.file,
+              imagePath,
+              token
+            ).then(result => ({
+              index: i,
+              originalUrl: image.url,
+              ...result
+            }))
+            .catch(error => ({
+              index: i,
+              originalUrl: image.url,
+              error: error instanceof Error ? error.message : "Upload failed"
+            }));
             
             uploadPromises.push(uploadPromise);
           }
@@ -329,7 +332,7 @@ export default function EditChapterForm({
                       <div className="flex items-start gap-2 bg-cyan-500/10 border border-cyan-500/20 rounded-lg p-3">
                         <div className="text-cyan-400 text-xs flex-shrink-0 mt-0.5">ℹ️</div>
                         <div className="text-xs text-cyan-300">
-                          New images will be automatically converted to WebP format for optimal performance.
+                          Таны browser дээр WebP болгож хөрвүүлнэ (Vercel bandwidth хэмнэнэ).
                         </div>
                       </div>
                     )}
