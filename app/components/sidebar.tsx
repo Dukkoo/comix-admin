@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Home, Users, BookOpen, Store, LogOut, Image, Star } from 'lucide-react';
+import { Home, Users, BookOpen, Store, LogOut, Image, Star, Hash } from 'lucide-react';
 import { useAuth } from '@/app/providers';
 import { cn } from '@/lib/utils';
 
@@ -13,6 +13,7 @@ const navigation = [
   { name: 'Carousel', href: '/carousel', icon: Image },
   { name: 'Алдартай', href: '/popular', icon: Star },
   { name: 'Бүтээгдэхүүн', href: '/#', icon: Store },
+  { name: 'Онцлох', href: '/featured', icon: Hash },
 ];
 
 export default function Sidebar() {
