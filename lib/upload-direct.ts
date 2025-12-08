@@ -1,5 +1,5 @@
 // lib/upload-direct.ts
-export async function uploadImageDirectly(
+export async function uploadImageDirectToR2(
   file: File,
   path: string,
   token: string
