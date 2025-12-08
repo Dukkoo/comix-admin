@@ -1,7 +1,7 @@
 // app/api/upload/presigned-url/route.ts
 import { NextRequest, NextResponse } from "next/server";
-import { S3Client } from "@aws-sdk/client-s3";
-import { createPresignedPost } from "@aws-sdk/s3-presigned-post";
+import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { auth } from "@/firebase/server";
 
 const r2Client = new S3Client({
@@ -27,24 +27,26 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Admin required" }, { status: 403 });
     }
 
-    const { path } = await request.json();
+    const { path, contentType } = await request.json();
 
     if (!path) {
       return NextResponse.json({ error: "Path required" }, { status: 400 });
     }
 
-    const { url, fields } = await createPresignedPost(r2Client, {
+    // Create PUT command for R2
+    const command = new PutObjectCommand({
       Bucket: process.env.R2_BUCKET_NAME!,
       Key: path,
-      Conditions: [
-        ["content-length-range", 0, 52428800], // 50MB max
-      ],
-      Expires: 3600, // 1 hour
+      ContentType: contentType || "image/webp",
+    });
+
+    // Generate presigned URL (works with R2)
+    const uploadUrl = await getSignedUrl(r2Client, command, {
+      expiresIn: 3600, // 1 hour
     });
 
     return NextResponse.json({
-      uploadUrl: url,
-      fields,
+      uploadUrl,
       publicUrl: `${process.env.R2_PUBLIC_URL}/${path}`,
     });
   } catch (error) {
