@@ -98,20 +98,24 @@ export async function GET(request: NextRequest) {
     let searchResults: string[] | null = null;
     
     if (search.trim()) {
-      const searchTerm = search.trim().toLowerCase();
+      const searchTerm = search.trim(); // Keep original case
       
-      // Email search
+      // Email search - use client-side filtering for case-insensitive
       if (searchType === 'email' || (!searchType && searchTerm.includes('@'))) {
-        const emailQuery = await firestore
+        const allUsersQuery = await firestore
           .collection("users")
-          .where("email", ">=", searchTerm)
-          .where("email", "<=", searchTerm + '\uf8ff')
-          .limit(100)
+          .limit(1000)
           .get();
         
-        searchResults = emailQuery.docs.map(doc => doc.id);
+        const matchedUsers = allUsersQuery.docs.filter(doc => {
+          const email = doc.data().email || '';
+          return email.toLowerCase().includes(searchTerm.toLowerCase());
+        });
+        
+        searchResults = matchedUsers.map(doc => doc.id);
+        console.log(`Email search: "${searchTerm}" found ${searchResults.length} results`);
       }
-      // UserId search
+      // UserId search - exact match works fine
       else if (searchType === 'userId' || (!searchType && /^\d+$/.test(searchTerm))) {
         const userIdNum = parseInt(searchTerm);
         const userIdQuery = await firestore
@@ -121,17 +125,22 @@ export async function GET(request: NextRequest) {
           .get();
         
         searchResults = userIdQuery.docs.map(doc => doc.id);
+        console.log(`UserId search: ${userIdNum} found ${searchResults.length} results`);
       }
-      // Username search
+      // Username search - use client-side filtering
       else if (searchType === 'username' || !searchType) {
-        const usernameQuery = await firestore
+        const allUsersQuery = await firestore
           .collection("users")
-          .where("username", ">=", searchTerm)
-          .where("username", "<=", searchTerm + '\uf8ff')
-          .limit(100)
+          .limit(1000)
           .get();
         
-        searchResults = usernameQuery.docs.map(doc => doc.id);
+        const matchedUsers = allUsersQuery.docs.filter(doc => {
+          const username = doc.data().username || '';
+          return username.toLowerCase().includes(searchTerm.toLowerCase());
+        });
+        
+        searchResults = matchedUsers.map(doc => doc.id);
+        console.log(`Username search: "${searchTerm}" found ${searchResults.length} results`);
       }
       
       // If no results from search, return empty
@@ -168,20 +177,32 @@ export async function GET(request: NextRequest) {
     const offset = (page - 1) * limit;
     
     // Get paginated documents
-    let paginatedQuery = firestoreQuery.limit(limit);
+    let userDocs;
     
-    if (offset > 0 && !searchResults) {
-      paginatedQuery = paginatedQuery.offset(offset) as any;
+    if (searchResults) {
+      // For search results, fetch specific documents by ID
+      const paginatedIds = searchResults.slice(offset, offset + limit);
+      const docPromises = paginatedIds.map(id => 
+        firestore.collection("users").doc(id).get()
+      );
+      const docs = await Promise.all(docPromises);
+      userDocs = docs.filter(doc => doc.exists);
+    } else {
+      // For non-search, use normal query
+      let paginatedQuery = firestoreQuery.limit(limit);
+      
+      if (offset > 0) {
+        paginatedQuery = paginatedQuery.offset(offset) as any;
+      }
+      
+      const snapshot = await paginatedQuery.get();
+      userDocs = snapshot.docs;
     }
-    
-    const snapshot = await paginatedQuery.get();
-    
     // ========================================
     // OPTIMIZATION 4: Batch Auth User Fetching
     // Auth.getUser()-г зөвхөн шаардлагатай үед дуудах
     // ========================================
     
-    const userDocs = snapshot.docs;
     const userIds = userDocs.map(doc => doc.id);
     
     // Fetch auth users in batch (more efficient than individual calls)
@@ -266,20 +287,9 @@ export async function GET(request: NextRequest) {
     
     // Filter out null values
     const validUsers = processedUsers.filter(user => user !== null) as UserData[];
-    
-    // Apply search filter if needed (for non-indexed searches)
-    let finalUsers = validUsers;
-    if (searchResults) {
-      finalUsers = validUsers.filter(user => searchResults.includes(user.id));
-    }
-    
-    // Handle pagination for search results
-    if (searchResults && offset > 0) {
-      finalUsers = finalUsers.slice(offset, offset + limit);
-    }
 
     return NextResponse.json({
-      data: finalUsers,
+      data: validUsers,
       totalPages,
       currentPage: page,
       totalCount,

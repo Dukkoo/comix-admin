@@ -1,29 +1,32 @@
+// app/users/[userId]/page.tsx
 "use client";
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from '@/app/providers';
-import { ArrowLeft, Crown, Calendar, Mail, User, Zap, Edit, Plus, Minus, Hash, Monitor, Trash2, Ban, RotateCcw } from "lucide-react";
+import { ArrowLeft, Crown, Calendar, Mail, User, Zap, Edit, Plus, Minus, Hash, Monitor, Trash2, Ban, RotateCcw, AlertTriangle, MapPin, Globe, Smartphone, Tablet } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { updateUser, getUser, removeDevice, unsuspendUser } from "./actions";
+import { Separator } from "@/components/ui/separator";
+import { updateUser, getUser, removeDevice, banUser, unbanUser } from "./actions";
+import { formatDistanceToNow } from "date-fns";
 
 interface Device {
   deviceId: string;
-  deviceName: string;
-  browser: string;
-  os: string;
-  lastActive: string;
-}
-
-interface SuspensionInfo {
-  isSuspended: boolean;
-  suspendedUntil?: string;
-  reason?: string;
+  deviceName?: string;
+  browser?: string;
+  os?: string;
+  ipAddress?: string;
+  screenResolution?: string;
+  timezone?: string;
+  language?: string;
+  firstSeen?: string;
+  lastUsed?: string;
+  lastActive?: string; // Legacy field
 }
 
 interface User {
@@ -37,6 +40,11 @@ interface User {
   subscriptionEndDate?: string;
   subscriptionStartDate?: string;
   createdAt: string;
+  devices: Device[];
+  deviceCount: number;
+  banned: boolean;
+  banExpiry: string | null;
+  banReason: string;
 }
 
 interface UserEditPageProps {
@@ -49,15 +57,13 @@ export default function UserEditPage({ params }: UserEditPageProps) {
   const router = useRouter();
   const auth = useAuth();
   const [user, setUser] = useState<User | null>(null);
-  const [devices, setDevices] = useState<Device[]>([]);
-  const [suspensionInfo, setSuspensionInfo] = useState<SuspensionInfo | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [banning, setBanning] = useState(false);
   const [subscriptionDays, setSubscriptionDays] = useState<string>("");
   const [xpAmount, setXpAmount] = useState<string>("");
   const [userId, setUserId] = useState<string>("");
   const [mode, setMode] = useState<"add" | "set">("add");
-  const [suspendingDays, setSuspendingDays] = useState<string>("");
 
   useEffect(() => {
     const resolveParams = async () => {
@@ -80,7 +86,7 @@ export default function UserEditPage({ params }: UserEditPageProps) {
       
       if (!token) {
         toast.error("Authentication required");
-        router.push("/users");
+        router.push("/admin/users");
         return;
       }
 
@@ -88,18 +94,16 @@ export default function UserEditPage({ params }: UserEditPageProps) {
       
       if (!result.success || !result.data) {
         toast.error(result.error || "Failed to fetch user");
-        router.push("/users");
+        router.push("/admin/users");
         return;
       }
 
       setUser(result.data);
-      setDevices(result.data.devices || []);
-      setSuspensionInfo(result.data.suspensionInfo || null);
       setXpAmount(result.data.xp.toString());
     } catch (error) {
       console.error('Error fetching user:', error);
       toast.error("Failed to fetch user data");
-      router.push("/users");
+      router.push("/admin/users");
     } finally {
       setLoading(false);
     }
@@ -152,6 +156,71 @@ export default function UserEditPage({ params }: UserEditPageProps) {
     }
   };
 
+  const handleBan = async (days: number) => {
+    if (!user) return;
+    if (!confirm(`${days} хоногийн бан өгөх үү?`)) return;
+
+    setBanning(true);
+    try {
+      const token = await auth?.currentUser?.getIdToken();
+      
+      if (!token) {
+        toast.error("Authentication required");
+        return;
+      }
+
+      const result = await banUser(
+        user.id,
+        days,
+        "Account sharing detected - multiple devices",
+        token
+      );
+
+      if (!result.success) {
+        toast.error(result.error || "Failed to ban user");
+        return;
+      }
+
+      toast.success(`${days} хоногийн бан амжилттай өгөгдлөө`);
+      await fetchUser();
+    } catch (error) {
+      console.error("Error banning user:", error);
+      toast.error("Failed to ban user");
+    } finally {
+      setBanning(false);
+    }
+  };
+
+  const handleUnban = async () => {
+    if (!user) return;
+    if (!confirm("Бан цуцлах уу?")) return;
+
+    setBanning(true);
+    try {
+      const token = await auth?.currentUser?.getIdToken();
+      
+      if (!token) {
+        toast.error("Authentication required");
+        return;
+      }
+
+      const result = await unbanUser(user.id, token);
+
+      if (!result.success) {
+        toast.error(result.error || "Failed to unban user");
+        return;
+      }
+
+      toast.success("Бан амжилттай цуцлагдлаа");
+      await fetchUser();
+    } catch (error) {
+      console.error("Error unbanning user:", error);
+      toast.error("Failed to unban user");
+    } finally {
+      setBanning(false);
+    }
+  };
+
   const handleRemoveDevice = async (deviceId: string) => {
     if (!confirm("Төхөөрөмжийг устгахыг хүсэж байна уу?")) return;
 
@@ -178,32 +247,21 @@ export default function UserEditPage({ params }: UserEditPageProps) {
     }
   };
 
-  const handleUnsuspend = async () => {
-    if (!user) return;
-
-    if (!confirm("Хэрэглэгчийг BAN-аас чөлөөлөхөд хүсэж байна уу?")) return;
-
-    try {
-      const token = await auth?.currentUser?.getIdToken();
-      
-      if (!token) {
-        toast.error("Authentication required");
-        return;
-      }
-
-      const result = await unsuspendUser(user.id, token);
-
-      if (!result.success) {
-        toast.error(result.error || "Failed to unsuspend user");
-        return;
-      }
-
-      toast.success("Хэрэглэгч BAN-аас чөлөөллөө");
-      await fetchUser();
-    } catch (error) {
-      console.error("Error unsuspending user:", error);
-      toast.error("Failed to unsuspend user");
+  const getDeviceIcon = (deviceName?: string) => {
+    // Handle undefined or null deviceName
+    if (!deviceName) {
+      return <Monitor className="w-5 h-5 text-gray-400" />;
     }
+    
+    const name = deviceName.toLowerCase();
+    
+    if (name.includes("android") || name.includes("iphone")) {
+      return <Smartphone className="w-5 h-5 text-cyan-400" />;
+    }
+    if (name.includes("ipad") || name.includes("tablet")) {
+      return <Tablet className="w-5 h-5 text-purple-400" />;
+    }
+    return <Monitor className="w-5 h-5 text-blue-400" />;
   };
 
   const formatDate = (dateString: string) => {
@@ -247,36 +305,16 @@ export default function UserEditPage({ params }: UserEditPageProps) {
     return (
       <div className="min-h-screen bg-zinc-900 p-6">
         <div className="max-w-6xl mx-auto space-y-6">
-          <div className="flex items-center gap-4">
-            <Skeleton className="h-10 w-10 bg-zinc-800" />
-            <div>
-              <Skeleton className="h-8 w-32 mb-2 bg-zinc-800" />
-              <Skeleton className="h-4 w-48 bg-zinc-800" />
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <Card className="bg-zinc-800/50 border-zinc-700/50">
-              <CardHeader>
-                <Skeleton className="h-6 w-32 bg-zinc-700" />
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <Skeleton className="h-16 w-full bg-zinc-700" />
-                <div className="grid grid-cols-2 gap-4">
-                  <Skeleton className="h-12 bg-zinc-700" />
-                  <Skeleton className="h-12 bg-zinc-700" />
-                </div>
+          <Skeleton className="h-10 w-32 bg-zinc-800" />
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <Card className="lg:col-span-2 bg-zinc-800/50 border-zinc-700/50">
+              <CardContent className="p-6">
+                <Skeleton className="h-32 w-full bg-zinc-700" />
               </CardContent>
             </Card>
-            
             <Card className="bg-zinc-800/50 border-zinc-700/50">
-              <CardHeader>
-                <Skeleton className="h-6 w-32 bg-zinc-700" />
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <Skeleton className="h-10 w-full bg-zinc-700" />
-                <Skeleton className="h-10 w-full bg-zinc-700" />
-                <Skeleton className="h-10 w-full bg-zinc-700" />
+              <CardContent className="p-6">
+                <Skeleton className="h-64 w-full bg-zinc-700" />
               </CardContent>
             </Card>
           </div>
@@ -287,20 +325,20 @@ export default function UserEditPage({ params }: UserEditPageProps) {
 
   if (!user) {
     return (
-      <div className="min-h-screen bg-zinc-900 p-6">
-        <div className="max-w-2xl mx-auto">
-          <Card className="bg-zinc-800/50 border-zinc-700/50">
-            <CardContent className="p-8 text-center">
-              <p className="text-white mb-4">User not found</p>
-              <Button onClick={() => router.push("/admin/users")}>
-                Буцах
-              </Button>
-            </CardContent>
-          </Card>
-        </div>
+      <div className="min-h-screen bg-zinc-900 p-6 flex items-center justify-center">
+        <Card className="bg-zinc-800/50 border-zinc-700/50">
+          <CardContent className="p-8 text-center">
+            <p className="text-white mb-4">User not found</p>
+            <Button onClick={() => router.push("/admin/users")}>
+              Буцах
+            </Button>
+          </CardContent>
+        </Card>
       </div>
     );
   }
+
+  const isSuspicious = user.deviceCount >= 3;
 
   return (
     <div className="min-h-screen bg-zinc-900 p-6">
@@ -316,13 +354,27 @@ export default function UserEditPage({ params }: UserEditPageProps) {
             <ArrowLeft className="w-4 h-4" />
           </Button>
           <div>
-            <h1 className="text-2xl font-bold text-white">Хэрэглэгчийн удирдлага</h1>
+            <h1 className="text-2xl font-bold text-white flex items-center gap-2">
+              {user.username}
+              {user.banned && (
+                <Badge className="bg-red-500/20 text-red-400 border-red-500/30">
+                  <Ban className="w-3 h-3 mr-1" /> BANNED
+                </Badge>
+              )}
+              {isSuspicious && !user.banned && (
+                <Badge className="bg-yellow-500/20 text-yellow-400 border-yellow-500/30">
+                  <AlertTriangle className="w-3 h-3 mr-1" /> SUSPICIOUS
+                </Badge>
+              )}
+            </h1>
+            <p className="text-sm text-zinc-400">{user.email}</p>
           </div>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* User Information Card */}
+          {/* Left Column */}
           <div className="lg:col-span-2 space-y-6">
+            {/* User Info Card */}
             <Card className="bg-zinc-800/50 border-zinc-700/50">
               <CardHeader>
                 <CardTitle className="flex items-center gap-2 text-white">
@@ -330,105 +382,119 @@ export default function UserEditPage({ params }: UserEditPageProps) {
                   Хэрэглэгчийн мэдээлэл
                 </CardTitle>
               </CardHeader>
-              <CardContent className="space-y-6">
-                <div className="flex items-center gap-3">
-                  <div className="w-12 h-12 bg-gradient-to-br from-cyan-500 to-blue-600 rounded-full flex items-center justify-center">
-                    <User className="w-6 h-6 text-white" />
-                  </div>
-                  <div>
-                    <h3 className="font-semibold text-white">{user.username}</h3>
-                    <p className="text-sm text-zinc-400 flex items-center gap-1">
-                      <Mail className="w-3 h-3" />
-                      {user.email}
-                    </p>
-                    {user.userId && (
-                      <p className="text-sm text-cyan-400 font-mono flex items-center gap-1">
-                        <Hash className="w-3 h-3" />
-                        ID: {user.userId}
-                      </p>
-                    )}
-                  </div>
-                </div>
-
+              <CardContent className="space-y-4">
                 <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <p className="text-xs text-zinc-500 uppercase tracking-wide">Төлөв</p>
+                  <div>
+                    <p className="text-xs text-zinc-500 uppercase">Төлөв</p>
                     {getSubscriptionBadge()}
                   </div>
-                  <div className="space-y-2">
-                    <p className="text-xs text-zinc-500 uppercase tracking-wide">Оноо</p>
+                  <div>
+                    <p className="text-xs text-zinc-500 uppercase">Оноо</p>
                     <div className="flex items-center gap-1 text-yellow-400">
                       <Zap className="w-4 h-4" />
                       <span className="font-medium">{formatXP(user.xp)}</span>
-                      <span className="text-xs text-zinc-500">({user.xp.toLocaleString()})</span>
                     </div>
                   </div>
+                  <div>
+                    <p className="text-xs text-zinc-500 uppercase">ID</p>
+                    <p className="text-cyan-400 font-mono">#{user.userId || "N/A"}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-zinc-500 uppercase">Төхөөрөмж</p>
+                    <p className="font-bold text-white">{user.deviceCount} / 2</p>
+                  </div>
                 </div>
 
-                {user.subscriptionStatus === "subscribed" && user.subscriptionDaysLeft !== undefined && (
-                  <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-lg p-4 space-y-2">
-                    <p className="text-sm text-emerald-400 flex items-center gap-1">
-                      <Calendar className="w-4 h-4" />
-                      {user.subscriptionDaysLeft === 0 
-                        ? "Өнөөдөр дуусна." 
-                        : user.subscriptionDaysLeft === 1 
-                        ? "1 өдөр дутуу байна." 
-                        : `${user.subscriptionDaysLeft} өдөр дутуу байна.`
-                      }
+                {user.banned && (
+                  <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-4">
+                    <p className="text-red-400 font-medium">
+                      Бан дуусах: {user.banExpiry ? formatDate(user.banExpiry) : "N/A"}
                     </p>
-                    {user.subscriptionEndDate && (
-                      <p className="text-xs text-emerald-300">
-                        Дуусах огноо: {formatDate(user.subscriptionEndDate)}
-                      </p>
-                    )}
+                    <p className="text-sm text-zinc-400 mt-1">Шалтгаан: {user.banReason}</p>
                   </div>
                 )}
-
-                <div className="text-xs text-zinc-500 pt-2 border-t border-zinc-700">
-                  Хэрэглэгч болсон огноо: {new Date(user.createdAt).toLocaleDateString("en-US", {
-                    year: "numeric",
-                    month: "long",
-                    day: "numeric",
-                  })}
-                </div>
               </CardContent>
             </Card>
 
             {/* Devices Card */}
             <Card className="bg-zinc-800/50 border-zinc-700/50">
               <CardHeader>
-                <CardTitle className="flex items-center gap-2 text-white">
-                  <Monitor className="w-5 h-5 text-cyan-400" />
-                  Бүртгэгдсэн төхөөрөмжүүд ({devices.length}/2)
+                <CardTitle className="flex items-center justify-between text-white">
+                  <span className="flex items-center gap-2">
+                    <Monitor className="w-5 h-5 text-cyan-400" />
+                    Бүртгэлтэй төхөөрөмжүүд ({user.deviceCount})
+                  </span>
+                  {isSuspicious && (
+                    <Badge className="bg-yellow-500/20 text-yellow-400 border-yellow-500/30">
+                      ⚠️ 2+ төхөөрөмж
+                    </Badge>
+                  )}
                 </CardTitle>
               </CardHeader>
               <CardContent>
-                {devices.length === 0 ? (
+                {user.devices.length === 0 ? (
                   <p className="text-zinc-400 text-sm">Төхөөрөмж бүртгэгдээгүй байна</p>
                 ) : (
-                  <div className="space-y-3">
-                    {devices.map((device) => (
+                  <div className="space-y-4">
+                    {user.devices.map((device, index) => (
                       <div
-                        key={device.deviceId}
-                        className="bg-zinc-900/50 border border-zinc-700/30 rounded-lg p-4 flex justify-between items-start"
+                        key={`${device.deviceId}-${index}`}
+                        className="p-4 bg-zinc-700/30 rounded-lg border border-zinc-700"
                       >
-                        <div>
-                          <p className="text-white font-medium">{device.deviceName}</p>
-                          <p className="text-sm text-zinc-400">
-                            {device.browser} • {device.os}
-                          </p>
-                          <p className="text-xs text-zinc-500 mt-1">
-                            Сүүлд идэвхтэй: {new Date(device.lastActive).toLocaleString('mn-MN')}
-                          </p>
+                        <div className="flex items-start justify-between">
+                          <div className="flex items-start gap-3">
+                            <div className="mt-1">{getDeviceIcon(device.deviceName)}</div>
+                            <div>
+                              <h4 className="text-white font-medium">
+                                {device.deviceName || "Unknown Device"}
+                              </h4>
+                              <p className="text-sm text-zinc-400">
+                                {device.browser || "Unknown"} · {device.os || "Unknown"}
+                              </p>
+                              {device.ipAddress && (
+                                <div className="flex items-center gap-4 mt-2 text-xs text-zinc-500">
+                                  <span className="flex items-center gap-1">
+                                    <MapPin className="w-3 h-3" />
+                                    {device.ipAddress}
+                                  </span>
+                                  {device.timezone && (
+                                    <span className="flex items-center gap-1">
+                                      <Globe className="w-3 h-3" />
+                                      {device.timezone}
+                                    </span>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                          {index === 0 && (
+                            <Badge className="bg-green-500/20 text-green-400 border-green-500/30">
+                              Үндсэн
+                            </Badge>
+                          )}
                         </div>
-                        <Button
-                          onClick={() => handleRemoveDevice(device.deviceId)}
-                          variant="outline"
-                          size="sm"
-                          className="border-red-600 text-red-400 hover:bg-red-900/20"
-                        >
-                          <Trash2 className="w-3 h-3" />
-                        </Button>
+                        <Separator className="my-3 bg-zinc-700" />
+                        <div className="flex items-center justify-between text-xs text-zinc-400">
+                          <div className="flex items-center gap-4">
+                            {device.firstSeen && (
+                              <span>Анх: {new Date(device.firstSeen).toLocaleDateString()}</span>
+                            )}
+                            <span>
+                              Сүүлд: {device.lastUsed || device.lastActive 
+                                ? formatDistanceToNow(new Date(device.lastUsed || device.lastActive!), { addSuffix: true })
+                                : "N/A"
+                              }
+                            </span>
+                          </div>
+                          <Button
+                            onClick={() => handleRemoveDevice(device.deviceId)}
+                            variant="ghost"
+                            size="sm"
+                            className="text-red-400 hover:text-red-300 hover:bg-red-500/20"
+                          >
+                            <Trash2 className="w-3 h-3" />
+                          </Button>
+                        </div>
                       </div>
                     ))}
                   </div>
@@ -437,161 +503,158 @@ export default function UserEditPage({ params }: UserEditPageProps) {
             </Card>
           </div>
 
-          {/* Management Form Card */}
-          <Card className="bg-zinc-800/50 border-zinc-700/50 h-fit">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2 text-white">
-                <Edit className="w-5 h-5 text-cyan-400" />
-                Хэрэглэгчийг тохируулах
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-6">
-              {/* Suspension Status */}
-              {suspensionInfo?.isSuspended && (
-                <div className="bg-red-900/20 border border-red-600/30 rounded-lg p-3 space-y-2">
-                  <p className="text-sm text-red-400 flex items-center gap-2">
-                    <Ban className="w-4 h-4" />
-                    BAN-д шатаатай байна
-                  </p>
-                  {suspensionInfo.suspendedUntil && (
-                    <p className="text-xs text-red-300">
-                      Дуусах: {formatDate(suspensionInfo.suspendedUntil)}
-                    </p>
-                  )}
-                  {suspensionInfo.reason && (
-                    <p className="text-xs text-red-300">
-                      Шалтгаан: {suspensionInfo.reason}
-                    </p>
-                  )}
-                  <Button
-                    onClick={handleUnsuspend}
-                    size="sm"
-                    className="w-full mt-2 bg-emerald-600 hover:bg-emerald-700 text-white"
-                  >
-                    <RotateCcw className="w-3 h-3 mr-1" />
-                    BAN чөлөөлөх
-                  </Button>
-                </div>
-              )}
+          {/* Right Column - Management */}
+          <div className="space-y-6">
+            {/* Subscription & XP Management */}
+            <Card className="bg-zinc-800/50 border-zinc-700/50">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-white">
+                  <Edit className="w-5 h-5 text-cyan-400" />
+                  Хэрэглэгчийг тохируулах
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                {/* Subscription */}
+                <div className="space-y-4">
+                  <div>
+                    <label className="text-sm font-medium text-zinc-300 mb-2 block">
+                      Эрхийн хугацаа
+                    </label>
+                    <div className="flex gap-2 mb-2">
+                      <Button
+                        type="button"
+                        variant={mode === "add" ? "default" : "outline"}
+                        size="sm"
+                        onClick={() => setMode("add")}
+                        className={mode === "add"
+                          ? "bg-cyan-600 hover:bg-cyan-700" 
+                          : "bg-zinc-700 border-zinc-600 text-white hover:bg-zinc-600"
+                        }
+                      >
+                        <Plus className="w-3 h-3 mr-1" />
+                        Нэмэх
+                      </Button>
+                      <Button
+                        type="button"
+                        variant={mode === "set" ? "default" : "outline"}
+                        size="sm"
+                        onClick={() => setMode("set")}
+                        className={mode === "set" 
+                          ? "bg-cyan-600 hover:bg-cyan-700" 
+                          : "bg-zinc-700 border-zinc-600 text-white hover:bg-zinc-600"
+                        }
+                      >
+                        <Edit className="w-3 h-3 mr-1" />
+                        Тохируулах
+                      </Button>
+                    </div>
+                    <Input
+                      type="number"
+                      min="0"
+                      max="365"
+                      value={subscriptionDays}
+                      onChange={(e) => setSubscriptionDays(e.target.value)}
+                      placeholder="Хоногийн тоо"
+                      className="bg-zinc-700/50 border-zinc-600 text-white"
+                    />
+                  </div>
 
-              {/* Subscription Management */}
-              <div className="space-y-4">
-                <div>
-                  <label className="text-sm font-medium text-zinc-300 mb-2 block">
-                    Эрхийн хугацаа
-                  </label>
-                  <div className="flex gap-2 mb-2">
+                  <div className="grid grid-cols-3 gap-2">
                     <Button
                       type="button"
-                      variant={mode === "add" ? "default" : "outline"}
+                      variant="outline"
                       size="sm"
-                      onClick={() => setMode("add")}
-                      className={mode === "add"
-                        ? "bg-cyan-600 hover:bg-cyan-700 cursor-pointer" 
-                        : "bg-zinc-700 border-zinc-600 text-white hover:bg-zinc-600 cursor-pointer"
-                      }
+                      onClick={() => setSubscriptionDays("7")}
+                      className="bg-zinc-700/50 border-zinc-600 text-white"
                     >
-                      <Plus className="w-3 h-3 mr-1" />
-                      Нэмэх
+                      7 өдөр
                     </Button>
                     <Button
                       type="button"
-                      variant={mode === "set" ? "default" : "outline"}
+                      variant="outline"
                       size="sm"
-                      onClick={() => setMode("set")}
-                      className={mode === "set" 
-                        ? "bg-cyan-600 hover:bg-cyan-700 cursor-pointer" 
-                        : "bg-zinc-700 border-zinc-600 text-white hover:bg-zinc-600 cursor-pointer"
-                      }
+                      onClick={() => setSubscriptionDays("30")}
+                      className="bg-zinc-700/50 border-zinc-600 text-white"
                     >
-                      <Edit className="w-3 h-3 mr-1" />
-                      Тохируулах
+                      30 өдөр
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setSubscriptionDays("0")}
+                      className="bg-red-700/50 border-red-600 text-red-300"
+                    >
+                      <Minus className="w-3 h-3 mr-1" />
+                      Дуусгах
                     </Button>
                   </div>
+                </div>
+
+                {/* XP */}
+                <div>
+                  <label className="text-sm font-medium text-zinc-300 block mb-2">
+                    Онооны хэмжээ
+                  </label>
                   <Input
                     type="number"
                     min="0"
-                    max="365"
-                    value={subscriptionDays}
-                    onChange={(e) => setSubscriptionDays(e.target.value)}
-                    placeholder={mode === "add" ? "Хоногийн тоо оруулах" : "Total days"}
-                    className="bg-zinc-700/50 border-zinc-600 text-white placeholder-zinc-400"
+                    value={xpAmount}
+                    onChange={(e) => setXpAmount(e.target.value)}
+                    className="bg-zinc-700/50 border-zinc-600 text-white"
                   />
-                  <p className="text-xs text-zinc-500 mt-1">
-                    {mode === "add" 
-                      ? "Хоногийн тоо нэмэх" 
-                      : "Хоногийн тоог шууд оруулах"
-                    }
-                  </p>
                 </div>
 
-                <div className="grid grid-cols-3 gap-2">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setSubscriptionDays("7")}
-                    className="bg-zinc-700/50 border-zinc-600 text-white hover:bg-zinc-600"
-                  >
-                    7 өдөр
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setSubscriptionDays("30")}
-                    className="bg-zinc-700/50 border-zinc-600 text-white hover:bg-zinc-600"
-                  >
-                    30 өдөр
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setSubscriptionDays("0")}
-                    className="bg-red-700/50 border-red-600 text-red-300 hover:bg-red-600"
-                  >
-                    <Minus className="w-3 h-3 mr-1" />
-                    Дуусгах
-                  </Button>
-                </div>
-              </div>
+                <Button
+                  onClick={handleSave}
+                  disabled={saving}
+                  className="w-full bg-cyan-600 hover:bg-cyan-700"
+                >
+                  {saving ? "Хадгалж байна..." : "Хадгалах"}
+                </Button>
+              </CardContent>
+            </Card>
 
-              {/* XP Management */}
-              <div className="space-y-2">
-                <label className="text-sm font-medium text-zinc-300 block">
-                  Онооны хэмжээ
-                </label>
-                <Input
-                  type="number"
-                  min="0"
-                  value={xpAmount}
-                  onChange={(e) => setXpAmount(e.target.value)}
-                  placeholder="Онооны хэмжээ оруулах"
-                  className="bg-zinc-700/50 border-zinc-600 text-white placeholder-zinc-400"
-                />
-                <p className="text-xs text-zinc-500">
-                  Одоогоор {user.xp.toLocaleString()} оноотой байна.
-                </p>
-              </div>
-
-              {/* Save Button */}
-              <Button
-                onClick={handleSave}
-                disabled={saving || (!subscriptionDays && (!xpAmount || parseInt(xpAmount) === user.xp))}
-                className="w-full bg-cyan-600 hover:bg-cyan-700 text-white cursor-pointer"
-              >
-                {saving ? (
-                  <>
-                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
-                    Хадгалж байна...
-                  </>
-                ) : (
-                  "Хадгалах"
-                )}
-              </Button>
-            </CardContent>
-          </Card>
+            {/* Ban Controls */}
+            {user.subscriptionStatus === "subscribed" && (
+              <Card className="bg-zinc-800/50 border-zinc-700/50">
+                <CardHeader>
+                  <CardTitle className="text-white">Ban удирдлага</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  {user.banned ? (
+                    <Button
+                      onClick={handleUnban}
+                      disabled={banning}
+                      className="w-full bg-green-600 hover:bg-green-700"
+                    >
+                      <RotateCcw className="w-4 h-4 mr-2" />
+                      Бан цуцлах
+                    </Button>
+                  ) : (
+                    <div className="space-y-2">
+                      <Button
+                        onClick={() => handleBan(7)}
+                        disabled={banning}
+                        className="w-full bg-orange-600 hover:bg-orange-700"
+                      >
+                        <Ban className="w-4 h-4 mr-2" />
+                        7 хоног бан
+                      </Button>
+                      <Button
+                        onClick={() => handleBan(30)}
+                        disabled={banning}
+                        className="w-full bg-red-600 hover:bg-red-700"
+                      >
+                        <Ban className="w-4 h-4 mr-2" />
+                        30 хоног бан
+                      </Button>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            )}
+          </div>
         </div>
       </div>
     </div>

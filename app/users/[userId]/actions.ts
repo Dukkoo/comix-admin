@@ -157,27 +157,55 @@ export async function getUser(userId: string, authToken: string) {
     const userDoc = await userDocRef.get();
     const firestoreData = userDoc.exists ? userDoc.data() : {};
 
-    // Get devices
-    const devicesSnapshot = await firestore
-      .collection("users")
-      .doc(userId)
-      .collection("devices")
-      .get();
+    // ========================================
+    // Get devices from Firestore user document
+    // Supports both: devices array (REST API) OR devices subcollection
+    // ========================================
+    let devices: any[] = [];
+    let deviceCount = 0;
     
-    const devices = devicesSnapshot.docs.map((doc) => ({
-      deviceId: doc.id,
-      ...doc.data(),
-    })) as any[];
+    // Option 1: From user document devices array (REST API structure)
+    if (firestoreData?.devices && Array.isArray(firestoreData.devices)) {
+      devices = firestoreData.devices;
+      deviceCount = devices.length;
+    }
+    // Option 2: From devices subcollection (current structure)
+    else {
+      const devicesSnapshot = await firestore
+        .collection("users")
+        .doc(userId)
+        .collection("devices")
+        .get();
+      
+      devices = devicesSnapshot.docs.map((doc) => ({
+        deviceId: doc.id,
+        ...doc.data(),
+      }));
+      deviceCount = devices.length;
+    }
 
-    // Get suspension info
-    const suspensionRef = firestore.collection("suspension_info").doc(userId);
-    const suspensionDoc = await suspensionRef.get();
-    const suspensionData = suspensionDoc.exists ? suspensionDoc.data() : null;
-    const suspensionInfo = suspensionData ? {
-      isSuspended: true,
-      suspendedUntil: suspensionData.suspendedUntil,
-      reason: suspensionData.reason,
-    } : null;
+    // ========================================
+    // Get ban info (banned field in user doc)
+    // ========================================
+    let banned = firestoreData?.banned || false;
+    let banExpiry = firestoreData?.banExpiry || null;
+    let banReason = firestoreData?.banReason || "";
+
+    // Check if ban expired
+    if (banned && banExpiry) {
+      const expiryDate = new Date(banExpiry);
+      if (expiryDate <= new Date()) {
+        // Auto unban
+        await userDocRef.update({
+          banned: false,
+          banExpiry: null,
+          banReason: "",
+        });
+        banned = false;
+        banExpiry = null;
+        banReason = "";
+      }
+    }
 
     const userData = {
       id: authUser.uid,
@@ -190,7 +218,11 @@ export async function getUser(userId: string, authToken: string) {
       createdAt: authUser.metadata.creationTime || new Date().toISOString(),
       lastLogin: authUser.metadata.lastSignInTime || null,
       devices,
-      suspensionInfo: suspensionInfo || null,
+      deviceCount,
+      banned,
+      banExpiry,
+      banReason,
+      userId: firestoreData?.userId,
     };
 
     let subscriptionDaysLeft: number | undefined;
@@ -237,22 +269,38 @@ export async function removeDevice(userId: string, deviceId: string, authToken: 
       };
     }
 
-    // Remove from user devices collection
-    await firestore
-      .collection("users")
-      .doc(userId)
-      .collection("devices")
-      .doc(deviceId)
-      .delete();
+    const userRef = firestore.collection("users").doc(userId);
+    const userDoc = await userRef.get();
+    
+    if (!userDoc.exists) {
+      return {
+        success: false,
+        error: "User not found",
+      };
+    }
 
-    // Also remove from device_tracking collection if exists
-    await firestore
-      .collection("device_tracking")
-      .doc(userId)
-      .collection("devices")
-      .doc(deviceId)
-      .delete()
-      .catch(() => {}); // Ignore if doesn't exist
+    const userData = userDoc.data();
+    
+    // Check if devices is an array (REST API structure)
+    if (userData?.devices && Array.isArray(userData.devices)) {
+      // Remove from array
+      const updatedDevices = userData.devices.filter(
+        (d: any) => d.deviceId !== deviceId
+      );
+      
+      await userRef.update({
+        devices: updatedDevices,
+        deviceCount: updatedDevices.length,
+      });
+    } else {
+      // Remove from subcollection
+      await firestore
+        .collection("users")
+        .doc(userId)
+        .collection("devices")
+        .doc(deviceId)
+        .delete();
+    }
 
     revalidatePath(`/admin/users/${userId}`);
 
@@ -270,7 +318,10 @@ export async function removeDevice(userId: string, deviceId: string, authToken: 
   }
 }
 
-export async function unsuspendUser(userId: string, authToken: string) {
+// ========================================
+// NEW: Ban user action
+// ========================================
+export async function banUser(userId: string, days: number, reason: string, authToken: string) {
   try {
     const verifiedToken = await auth.verifyIdToken(authToken);
 
@@ -281,24 +332,74 @@ export async function unsuspendUser(userId: string, authToken: string) {
       };
     }
 
-    // Remove suspension record
-    await firestore
-      .collection("suspension_info")
-      .doc(userId)
-      .delete();
+    const banExpiry = new Date();
+    banExpiry.setDate(banExpiry.getDate() + days);
+
+    await firestore.collection("users").doc(userId).update({
+      banned: true,
+      banExpiry: banExpiry.toISOString(),
+      banReason: reason,
+      bannedAt: new Date().toISOString(),
+      bannedBy: verifiedToken.uid,
+    });
 
     revalidatePath(`/admin/users/${userId}`);
+    revalidatePath("/admin/users");
 
     return {
       success: true,
-      message: "User unsuspended successfully",
+      message: `User banned for ${days} days`,
     };
 
   } catch (error) {
-    console.error("Error unsuspending user:", error);
+    console.error("Error banning user:", error);
     return {
       success: false,
-      error: "Failed to unsuspend user",
+      error: "Failed to ban user",
     };
   }
+}
+
+// ========================================
+// NEW: Unban user action
+// ========================================
+export async function unbanUser(userId: string, authToken: string) {
+  try {
+    const verifiedToken = await auth.verifyIdToken(authToken);
+
+    if (!verifiedToken.admin) {
+      return {
+        success: false,
+        error: "Admin access required",
+      };
+    }
+
+    await firestore.collection("users").doc(userId).update({
+      banned: false,
+      banExpiry: null,
+      banReason: "",
+      unbannedAt: new Date().toISOString(),
+      unbannedBy: verifiedToken.uid,
+    });
+
+    revalidatePath(`/admin/users/${userId}`);
+    revalidatePath("/admin/users");
+
+    return {
+      success: true,
+      message: "User unbanned successfully",
+    };
+
+  } catch (error) {
+    console.error("Error unbanning user:", error);
+    return {
+      success: false,
+      error: "Failed to unban user",
+    };
+  }
+}
+
+// Keep the old unsuspendUser for backwards compatibility
+export async function unsuspendUser(userId: string, authToken: string) {
+  return unbanUser(userId, authToken);
 }

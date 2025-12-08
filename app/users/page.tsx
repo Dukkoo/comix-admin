@@ -26,7 +26,7 @@ import { toast } from "sonner";
 
 interface User {
   id: string;
-  userId?: number; // 5 оронтой ID
+  userId?: number;
   username: string;
   email: string;
   xp: number;
@@ -54,7 +54,6 @@ export default function AdminUsersPage() {
   const [totalPages, setTotalPages] = useState(1);
   const [totalCount, setTotalCount] = useState(0);
   const [filterStatus, setFilterStatus] = useState<string>("all");
-  const [searchType, setSearchType] = useState<"id" | "email">("id");
   
   const pageSize = 25;
 
@@ -70,8 +69,8 @@ export default function AdminUsersPage() {
       const params = new URLSearchParams({
         page: page.toString(),
         limit: pageSize.toString(),
-        sortBy: 'createdAt', // Sort by creation date
-        sortOrder: 'desc', // Newest first
+        sortBy: 'createdAt',
+        sortOrder: 'desc',
       });
 
       if (search && search.trim()) {
@@ -103,6 +102,12 @@ export default function AdminUsersPage() {
       }
 
       const data: UsersResponse = await response.json();
+      console.log('Search results:', {
+        searchTerm,
+        status,
+        resultCount: data.data.length,
+        totalCount: data.totalCount
+      });
       setUsers(data.data);
       setTotalPages(data.totalPages);
       setCurrentPage(data.currentPage);
@@ -115,21 +120,36 @@ export default function AdminUsersPage() {
     }
   };
 
-  // Debounced search - triggers automatically as user types
+  // Initial load
   useEffect(() => {
+    fetchUsers(1, "", "all");
+  }, []); // Empty deps - only run once on mount
+
+  // Debounced search
+  useEffect(() => {
+    // Skip if this is initial render
+    if (searchTerm === "" && filterStatus === "all") {
+      return;
+    }
+
     const delayDebounce = setTimeout(() => {
-      if (searchTerm.trim().length >= 2 || searchTerm.trim().length === 0) {
-        setCurrentPage(1);
-        fetchUsers(1, searchTerm, filterStatus);
-      }
-    }, 500); // Wait 500ms after user stops typing
+      setCurrentPage(1);
+      fetchUsers(1, searchTerm, filterStatus);
+    }, 500);
 
     return () => clearTimeout(delayDebounce);
-  }, [searchTerm]);
+  }, [searchTerm]); // Only watch searchTerm
 
+  // Filter change
   useEffect(() => {
+    // Skip initial render
+    if (filterStatus === "all" && searchTerm === "") {
+      return;
+    }
+    
+    setCurrentPage(1);
     fetchUsers(1, searchTerm, filterStatus);
-  }, [filterStatus]);
+  }, [filterStatus]); // Only watch filterStatus
 
   const handleSearch = () => {
     setCurrentPage(1);
