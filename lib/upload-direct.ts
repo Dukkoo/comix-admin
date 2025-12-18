@@ -67,7 +67,7 @@ async function convertToWebP(file: File): Promise<Blob> {
           }
         },
         "image/webp",
-        0.9
+        1.0
       );
     };
 
