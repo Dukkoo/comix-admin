@@ -240,7 +240,6 @@ export default function NewChapterForm({ mangaId, mangaTitle }: Props) {
                     <div className="flex items-start gap-2 bg-cyan-500/10 border border-cyan-500/20 rounded-lg p-3">
                       <div className="text-cyan-400 text-xs flex-shrink-0 mt-0.5">ℹ️</div>
                       <div className="text-xs text-cyan-300">
-                        Таны browser дээр WebP болгож хөрвүүлнэ (Vercel bandwidth хэмнэнэ).
                       </div>
                     </div>
                     
