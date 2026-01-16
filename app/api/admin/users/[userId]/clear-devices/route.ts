@@ -22,8 +22,8 @@ export async function POST(
       return NextResponse.json({ error: "Admin required" }, { status: 403 });
     }
 
-    // User-н devices subcollection устгах
-    const devicesRef = firestore.collection("users").doc(userId).collection("devices");
+    const userRef = firestore.collection("users").doc(userId);
+    const devicesRef = userRef.collection("devices");
     const devicesSnapshot = await devicesRef.get();
 
     const batch = firestore.batch();
@@ -31,6 +31,9 @@ export async function POST(
       batch.delete(doc.ref);
     });
     await batch.commit();
+
+    // deviceCount-г 0 болгох
+    await userRef.update({ deviceCount: 0 });
 
     return NextResponse.json({ 
       success: true, 

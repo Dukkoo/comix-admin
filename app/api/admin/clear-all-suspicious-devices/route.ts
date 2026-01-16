@@ -17,32 +17,39 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Admin required" }, { status: 403 });
     }
 
-    // Бүх subscribed хэрэглэгчдийг авах
+    // Suspicious users API-тай ижил query
     const usersSnapshot = await firestore
       .collection("users")
-      .where("subscriptionStatus", "==", "active")
+      .where("subscriptionStatus", "==", "subscribed")
+      .where("deviceCount", ">=", 3)
       .get();
 
     let clearedCount = 0;
+    let totalDevicesCleared = 0;
 
     for (const userDoc of usersSnapshot.docs) {
       const devicesRef = userDoc.ref.collection("devices");
       const devicesSnapshot = await devicesRef.get();
 
-      // 3+ device байвал устгах
-      if (devicesSnapshot.size >= 3) {
+      if (devicesSnapshot.size > 0) {
         const batch = firestore.batch();
         devicesSnapshot.docs.forEach((doc) => {
           batch.delete(doc.ref);
         });
         await batch.commit();
+
+        // deviceCount-г 0 болгох
+        await userDoc.ref.update({ deviceCount: 0 });
+
         clearedCount++;
+        totalDevicesCleared += devicesSnapshot.size;
       }
     }
 
     return NextResponse.json({ 
       success: true, 
-      clearedCount 
+      clearedCount,
+      totalDevicesCleared
     });
   } catch (error) {
     console.error("Error clearing all devices:", error);
