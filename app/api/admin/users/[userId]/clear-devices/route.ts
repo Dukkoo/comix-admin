@@ -5,9 +5,11 @@ import { auth, firestore } from "@/firebase/server";
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: { userId: string } }
+  { params }: { params: Promise<{ userId: string }> }
 ) {
   try {
+    const { userId } = await params;
+
     const authHeader = request.headers.get("authorization");
     if (!authHeader?.startsWith("Bearer ")) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -19,8 +21,6 @@ export async function POST(
     if (!verifiedToken.admin) {
       return NextResponse.json({ error: "Admin required" }, { status: 403 });
     }
-
-    const { userId } = params;
 
     // User-н devices subcollection устгах
     const devicesRef = firestore.collection("users").doc(userId).collection("devices");
