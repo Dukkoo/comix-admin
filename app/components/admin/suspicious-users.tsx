@@ -12,7 +12,8 @@ import {
   RefreshCw,
   Users,
   ChevronDown,
-  ChevronUp
+  ChevronUp,
+  Trash2
 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -33,8 +34,10 @@ export default function SuspiciousUsers() {
   const [users, setUsers] = useState<SuspiciousUser[]>([]);
   const [loading, setLoading] = useState(false);
   const [banning, setBanning] = useState<string | null>(null);
-  const [isOpen, setIsOpen] = useState(false); // Toggle state
-  const [hasFetched, setHasFetched] = useState(false); // Fetch хийсэн эсэх
+  const [clearingAll, setClearingAll] = useState(false);
+  const [clearingUser, setClearingUser] = useState<string | null>(null);
+  const [isOpen, setIsOpen] = useState(false);
+  const [hasFetched, setHasFetched] = useState(false);
 
   const getAuthToken = async () => {
     try {
@@ -85,7 +88,6 @@ export default function SuspiciousUsers() {
     const newIsOpen = !isOpen;
     setIsOpen(newIsOpen);
     
-    // Анх нээхэд л fetch хийх
     if (newIsOpen && !hasFetched) {
       fetchSuspiciousUsers();
     }
@@ -129,6 +131,76 @@ export default function SuspiciousUsers() {
     }
   };
 
+  // Нэг хэрэглэгчийн бүх device устгах
+  const handleClearUserDevices = async (userId: string, email: string) => {
+    if (!confirm(`${email} хэрэглэгчийн бүх төхөөрөмжийг устгах уу?`)) return;
+
+    setClearingUser(userId);
+    try {
+      const token = await getAuthToken();
+      
+      if (!token) {
+        toast.error("Authentication required");
+        return;
+      }
+
+      const response = await fetch(`/api/admin/users/${userId}/clear-devices`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to clear devices");
+      }
+
+      toast.success(`${email} хэрэглэгчийн бүх төхөөрөмж устгагдлаа`);
+      await fetchSuspiciousUsers();
+    } catch (error) {
+      console.error("Error clearing devices:", error);
+      toast.error("Failed to clear devices");
+    } finally {
+      setClearingUser(null);
+    }
+  };
+
+  // Бүх сэжигтэй хэрэглэгчдийн device устгах
+  const handleClearAllDevices = async () => {
+    if (!confirm(`${users.length} хэрэглэгчийн БҮГДИЙН төхөөрөмжийг устгах уу?`)) return;
+    if (!confirm("Итгэлтэй байна уу? Энэ үйлдлийг буцаах боломжгүй!")) return;
+
+    setClearingAll(true);
+    try {
+      const token = await getAuthToken();
+      
+      if (!token) {
+        toast.error("Authentication required");
+        return;
+      }
+
+      const response = await fetch("/api/admin/clear-all-suspicious-devices", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to clear all devices");
+      }
+
+      const data = await response.json();
+      toast.success(`${data.clearedCount || users.length} хэрэглэгчийн төхөөрөмж устгагдлаа`);
+      await fetchSuspiciousUsers();
+    } catch (error) {
+      console.error("Error clearing all devices:", error);
+      toast.error("Failed to clear all devices");
+    } finally {
+      setClearingAll(false);
+    }
+  };
+
   return (
     <Card className="bg-zinc-800/50 border-zinc-700/50">
       <CardHeader 
@@ -168,6 +240,23 @@ export default function SuspiciousUsers() {
       
       {isOpen && (
         <CardContent>
+          {/* Бүх device устгах товч */}
+          {users.length > 0 && (
+            <div className="mb-4">
+              <Button
+                onClick={handleClearAllDevices}
+                disabled={clearingAll}
+                className="w-full bg-purple-600 hover:bg-purple-700 text-white"
+              >
+                <Trash2 className="w-4 h-4 mr-2" />
+                {clearingAll 
+                  ? "Устгаж байна..." 
+                  : `Бүх хэрэглэгчийн төхөөрөмж устгах (${users.length})`
+                }
+              </Button>
+            </div>
+          )}
+
           {loading ? (
             <div className="space-y-3">
               {[1, 2, 3].map((i) => (
@@ -186,6 +275,7 @@ export default function SuspiciousUsers() {
             <div className="space-y-2 max-h-[500px] overflow-y-auto">
               {users.map((user) => {
                 const isBanning = banning === user.id;
+                const isClearing = clearingUser === user.id;
 
                 return (
                   <div
@@ -201,6 +291,17 @@ export default function SuspiciousUsers() {
                     </div>
 
                     <div className="flex items-center gap-2">
+                      {/* Device устгах товч */}
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => handleClearUserDevices(user.id, user.email)}
+                        disabled={isClearing}
+                        className="bg-purple-600/20 border-purple-500/50 text-purple-400 hover:bg-purple-600 hover:text-white"
+                      >
+                        <Trash2 className="w-3 h-3 mr-1" />
+                        {isClearing ? "..." : "Device"}
+                      </Button>
                       <Button
                         size="sm"
                         variant="outline"

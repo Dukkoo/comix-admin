@@ -1,14 +1,24 @@
 // lib/upload-direct.ts
+
 export async function uploadImageDirectToR2(
   file: File,
   path: string,
   token: string
 ): Promise<string> {
   try {
-    // Convert to WebP
-    const webpBlob = await convertToWebP(file);
+    // GIF, WebP хөрвүүлэхгүй
+    const skipConversion = file.type === "image/gif" || file.type === "image/webp";
+    
+    let uploadFile: Blob = file;
+    let uploadPath = path;
+    let contentType = file.type;
 
-    // Get presigned URL
+    if (!skipConversion) {
+      uploadFile = await convertToWebP(file);
+      uploadPath = path.replace(/\.(jpg|jpeg|png)$/i, ".webp");
+      contentType = "image/webp";
+    }
+
     const response = await fetch("/api/upload/presigned-url", {
       method: "POST",
       headers: {
@@ -16,8 +26,8 @@ export async function uploadImageDirectToR2(
         Authorization: `Bearer ${token}`,
       },
       body: JSON.stringify({
-        path,
-        contentType: "image/webp",
+        path: uploadPath,
+        contentType,
       }),
     });
 
@@ -27,13 +37,12 @@ export async function uploadImageDirectToR2(
 
     const { uploadUrl, publicUrl } = await response.json();
 
-    // Upload directly to R2 using PUT
     const uploadResponse = await fetch(uploadUrl, {
       method: "PUT",
       headers: {
-        "Content-Type": "image/webp",
+        "Content-Type": contentType,
       },
-      body: webpBlob,
+      body: uploadFile,
     });
 
     if (!uploadResponse.ok) {
@@ -54,12 +63,13 @@ async function convertToWebP(file: File): Promise<Blob> {
     const ctx = canvas.getContext("2d");
 
     img.onload = () => {
-      canvas.width = img.width;
-      canvas.height = img.height;
+      canvas.width = img.naturalWidth;
+      canvas.height = img.naturalHeight;
       ctx?.drawImage(img, 0, 0);
 
       canvas.toBlob(
         (blob) => {
+          URL.revokeObjectURL(img.src);
           if (blob) {
             resolve(blob);
           } else {
@@ -71,7 +81,11 @@ async function convertToWebP(file: File): Promise<Blob> {
       );
     };
 
-    img.onerror = () => reject(new Error("Failed to load image"));
+    img.onerror = () => {
+      URL.revokeObjectURL(img.src);
+      reject(new Error("Failed to load image"));
+    };
+
     img.src = URL.createObjectURL(file);
   });
 }
