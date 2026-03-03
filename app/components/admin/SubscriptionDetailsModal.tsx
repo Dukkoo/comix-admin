@@ -57,14 +57,20 @@ export default function SubscriptionDetailsModal({ isOpen, onClose }: Subscripti
       });
 
       if (!response.ok) {
-        throw new Error('Failed to fetch subscription details');
+        const errorData = await response.json().catch(() => ({}));
+        console.error('API Error:', {
+          status: response.status,
+          statusText: response.statusText,
+          error: errorData
+        });
+        throw new Error(errorData.error || `HTTP ${response.status}: ${response.statusText}`);
       }
 
       const details = await response.json();
       setData(details);
     } catch (error) {
       console.error('Error fetching details:', error);
-      toast.error('Дэлгэрэнгүй мэдээлэл татахад алдаа гарлаа');
+      toast.error(`Дэлгэрэнгүй мэдээлэл татахад алдаа гарлаа: ${error instanceof Error ? error.message : 'Unknown error'}`);
     } finally {
       setLoading(false);
     }
@@ -93,7 +99,7 @@ export default function SubscriptionDetailsModal({ isOpen, onClose }: Subscripti
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fadeIn">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 animate-fadeIn">
       <div 
         className="bg-gradient-to-br from-zinc-900 via-zinc-900 to-zinc-800 rounded-2xl shadow-2xl border border-cyan-500/20 w-full max-w-6xl max-h-[90vh] overflow-hidden animate-slideUp"
         style={{
@@ -101,16 +107,8 @@ export default function SubscriptionDetailsModal({ isOpen, onClose }: Subscripti
         }}
       >
         {/* Header */}
-        <div className="relative bg-gradient-to-r from-cyan-600 to-blue-600 px-8 py-6 border-b border-cyan-500/30">
-          <div className="absolute inset-0 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48ZGVmcz48cGF0dGVybiBpZD0iZ3JpZCIgd2lkdGg9IjQwIiBoZWlnaHQ9IjQwIiBwYXR0ZXJuVW5pdHM9InVzZXJTcGFjZU9uVXNlIj48cGF0aCBkPSJNIDQwIDAgTCAwIDAgMCA0MCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSJ3aGl0ZSIgc3Ryb2tlLW9wYWNpdHk9IjAuMDUiIHN0cm9rZS13aWR0aD0iMSIvPjwvcGF0dGVybj48L2RlZnM+PHJlY3Qgd2lkdGg9IjEwMCUiIGhlaWdodD0iMTAwJSIgZmlsbD0idXJsKCNncmlkKSIvPjwvc3ZnPg==')] opacity-30"></div>
-          
-          <div className="relative flex items-center justify-between">
-            <div>
-              <h2 className="text-3xl font-bold text-white mb-1" style={{ fontFamily: 'Space Grotesk, sans-serif' }}>
-                Subscription Analytics
-              </h2>
-              <p className="text-cyan-100 text-sm">Дэлгэрэнгүй төлбөрийн мэдээлэл</p>
-            </div>
+        <div className="relative bg-zinc-900 px-8 py-4 border-b border-zinc-700">
+          <div className="relative flex items-center justify-end">
             <div className="flex items-center space-x-3">
               <button
                 onClick={handleRefresh}
@@ -178,8 +176,8 @@ export default function SubscriptionDetailsModal({ isOpen, onClose }: Subscripti
                 {/* MRR */}
                 <div className="bg-gradient-to-br from-cyan-500/10 to-blue-500/10 border border-cyan-500/30 rounded-xl p-6 hover:scale-105 transition-transform duration-200 lg:col-span-2">
                   <div className="flex items-start justify-between mb-4">
-                    <div className="bg-cyan-500/20 p-3 rounded-lg">
-                      <DollarSign className="h-6 w-6 text-cyan-400" />
+                    <div className="bg-cyan-500/20 p-3 rounded-lg flex items-center justify-center">
+                      <span className="text-2xl font-bold text-cyan-400">₮</span>
                     </div>
                     <span className="text-xs text-cyan-400 bg-cyan-500/20 px-2 py-1 rounded-full">
                       MRR
@@ -189,13 +187,13 @@ export default function SubscriptionDetailsModal({ isOpen, onClose }: Subscripti
                     {data.mrr.amount.toLocaleString()}{data.mrr.currency}
                   </p>
                   <p className="text-sm text-cyan-300">
-                    Сарын дундаж орлого • {data.mrr.activeCount} идэвхтэй хэрэглэгч
+                    Энэ сарын орлого • {data.mrr.activeCount} идэвхжүүлэлт
                   </p>
                 </div>
               </div>
 
               {/* Trends Bar Chart */}
-              <div className="bg-zinc-800/50 border border-zinc-700/50 rounded-xl p-6">
+              <div className="bg-zinc-800/50 border border-zinc-700/50 rounded-xl p-6 hover:bg-zinc-900 transition-colors duration-200">
                 <div className="flex items-center justify-between mb-6">
                   <div className="flex items-center space-x-3">
                     <div className="bg-purple-500/20 p-2 rounded-lg">
@@ -223,12 +221,13 @@ export default function SubscriptionDetailsModal({ isOpen, onClose }: Subscripti
                       />
                       <Tooltip
                         contentStyle={{
-                          backgroundColor: '#27272a',
-                          border: '1px solid #52525b',
+                          backgroundColor: '#18181b',
+                          border: '1px solid #3f3f46',
                           borderRadius: '8px',
                           color: '#f4f4f5',
                         }}
-                        labelStyle={{ color: '#06b6d4' }}
+                        labelStyle={{ color: '#06b6d4', fontWeight: 600 }}
+                        cursor={{ fill: '#27272a' }}
                       />
                       <Bar 
                         dataKey="count" 
@@ -296,8 +295,8 @@ export default function SubscriptionDetailsModal({ isOpen, onClose }: Subscripti
                       />
                       <Tooltip
                         contentStyle={{
-                          backgroundColor: '#27272a',
-                          border: '1px solid #52525b',
+                          backgroundColor: '#18181b',
+                          border: '1px solid #3f3f46',
                           borderRadius: '8px',
                           color: '#f4f4f5',
                         }}
@@ -306,6 +305,7 @@ export default function SubscriptionDetailsModal({ isOpen, onClose }: Subscripti
                           return date.toLocaleDateString('mn-MN');
                         }}
                         formatter={(value: any) => [value, 'Идэвхжүүлэлт']}
+                        cursor={{ stroke: '#3f3f46', strokeWidth: 1, strokeDasharray: '5 5' }}
                       />
                       <Line
                         type="monotone"
