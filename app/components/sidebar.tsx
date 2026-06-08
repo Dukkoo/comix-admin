@@ -1,8 +1,7 @@
 'use client';
-
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Home, Users, BookOpen, Store, LogOut, Image, Star, Hash } from 'lucide-react';
+import { Home, Users, BookOpen, Store, LogOut, Image, Star, Hash, Receipt } from 'lucide-react';
 import { useAuth } from '@/app/providers';
 import { cn } from '@/lib/utils';
 
@@ -14,6 +13,7 @@ const navigation = [
   { name: 'Алдартай', href: '/popular', icon: Star },
   { name: 'Бүтээгдэхүүн', href: '/#', icon: Store },
   { name: 'Онцлох', href: '/featured', icon: Hash },
+  { name: 'Төлбөрийн бүртгэл', href: '/payments', icon: Receipt },
 ];
 
 export default function Sidebar() {
@@ -33,12 +33,11 @@ export default function Sidebar() {
       <div className="flex items-center h-16 px-6 border-b border-zinc-800">
         <span className="text-xl font-bold text-white">COMIX АДМИН</span>
       </div>
-
       <nav className="flex-1 px-4 py-6 space-y-2">
         {navigation.map((item) => {
           const Icon = item.icon;
           const isActive = pathname === item.href;
-          
+
           return (
             <Link
               key={item.name}
@@ -56,7 +55,6 @@ export default function Sidebar() {
           );
         })}
       </nav>
-
       <div className="p-4 border-t border-zinc-800">
         <div className="flex items-center px-4 py-3 mb-2 rounded-lg bg-zinc-800">
           <div className="flex items-center justify-center w-8 h-8 bg-cyan-600 rounded-full">
@@ -65,15 +63,13 @@ export default function Sidebar() {
             </span>
           </div>
           <div className="ml-3 flex-1 min-w-0">
-            <p className="text-sm font-medium text-white truncate">
-              Admin
-            </p>
+            <p className="text-sm font-medium text-white truncate">Admin</p>
             <p className="text-xs text-zinc-400 truncate">
               {currentUser?.email || 'admin@comix.mn'}
             </p>
           </div>
         </div>
-        
+
         <button
           onClick={handleLogout}
           className="flex items-center w-full px-4 py-3 text-sm font-medium text-red-400 rounded-lg hover:bg-zinc-800 transition-colors"
