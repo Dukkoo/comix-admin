@@ -135,52 +135,76 @@ export async function GET(request: NextRequest) {
       })
     );
 
-    // 4. Сарын дундаж орлого (MRR) - Current month revenue only
+    // 4. MRR - payment_logs-аас тооцох (хамгийн зөв арга)
     console.log('[Subscription Details] Calculating current month revenue...');
     let monthlyRevenue = 0;
     let activeSubscribersCount = 0;
 
     try {
-      // Get subscriptions that started THIS MONTH
       const endOfMonth = new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 0);
 
-      const monthSubscriptionsSnapshot = await firestore
-        .collection("users")
-        .where("subscriptionStatus", "==", "subscribed")
-        .where("subscriptionStartDate", ">=", startOfMonth.toISOString())
-        .where("subscriptionStartDate", "<=", endOfMonth.toISOString())
-        .select("subscriptionType", "subscriptionEndDate")
+      // ✅ payment_logs-аас энэ сарын төлбөрүүдийг авах
+      const paymentLogsSnapshot = await firestore
+        .collection("payment_logs")
+        .where("processedAt", ">=", startOfMonth.toISOString())
+        .where("processedAt", "<=", endOfMonth.toISOString())
+        .select("amount", "userId")
         .get();
 
-      console.log('[Subscription Details] This month subscriptions:', monthSubscriptionsSnapshot.size);
+      console.log('[Subscription Details] This month payment logs:', paymentLogsSnapshot.size);
 
-      // Subscription prices
-      const subscriptionPrices: { [key: string]: number } = {
-        monthly: 5900,    // 1 сар
-        quarterly: 15000, // 3 сар
-        biannual: 30000,  // 6 сар
-      };
+      // Давхардсан userId-г арилгаж тооцох
+      const uniqueUserIds = new Set<string>();
 
-      monthSubscriptionsSnapshot.docs.forEach((doc) => {
+      paymentLogsSnapshot.docs.forEach((doc) => {
         const data = doc.data();
-        
-        // Check if subscription is still active
-        if (data.subscriptionEndDate) {
-          const endDate = new Date(data.subscriptionEndDate);
-          if (endDate > currentDate) {
-            activeSubscribersCount++;
-            
-            const subType = data.subscriptionType || "monthly";
-            const price = subscriptionPrices[subType] || subscriptionPrices.monthly;
-            
-            monthlyRevenue += price;
-          }
+        if (data.amount) {
+          monthlyRevenue += data.amount;
+        }
+        if (data.userId) {
+          uniqueUserIds.add(data.userId);
         }
       });
 
-      console.log('[Subscription Details] Monthly revenue:', monthlyRevenue, 'Count:', activeSubscribersCount);
+      activeSubscribersCount = uniqueUserIds.size;
+
+      console.log('[Subscription Details] Monthly revenue:', monthlyRevenue, 'Unique users:', activeSubscribersCount);
     } catch (error) {
-      console.error('[Subscription Details] Error calculating revenue:', error);
+      console.error('[Subscription Details] Error calculating revenue from payment_logs:', error);
+
+      // Fallback: users collection-аас тооцох
+      try {
+        // ✅ Шинэ үнэ + planId ашиглах
+        const subscriptionPrices: { [key: string]: number } = {
+          '1month': 7900,
+          '3month': 20900,
+          '6month': 43900,
+        };
+
+        const endOfMonth = new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 0);
+
+        const monthSubscriptionsSnapshot = await firestore
+          .collection("users")
+          .where("subscriptionStatus", "==", "subscribed")
+          .where("lastPaymentDate", ">=", startOfMonth.toISOString())
+          .where("lastPaymentDate", "<=", endOfMonth.toISOString())
+          .select("lastPaymentAmount", "subscriptionEndDate")
+          .get();
+
+        monthSubscriptionsSnapshot.docs.forEach((doc) => {
+          const data = doc.data();
+          if (data.subscriptionEndDate) {
+            const endDate = new Date(data.subscriptionEndDate);
+            if (endDate > currentDate) {
+              activeSubscribersCount++;
+              // lastPaymentAmount шууд ашиглах
+              monthlyRevenue += data.lastPaymentAmount || 0;
+            }
+          }
+        });
+      } catch (fallbackError) {
+        console.error('[Subscription Details] Fallback revenue calculation also failed:', fallbackError);
+      }
     }
 
     // 5. Timeline data (last 90 days)
