@@ -16,6 +16,7 @@ interface PaymentLog {
   paymentType: 'desktop_qr' | 'mobile_bank_app';
   source: string;
   invoiceId: string;
+  internalUserId?: number;
   isDuplicate?: boolean;
 }
 
@@ -248,6 +249,9 @@ export default function PaymentsPage() {
                     <div className="flex items-center gap-2"><User className="h-3.5 w-3.5" />И-мэйл</div>
                   </th>
                   <th className="text-left px-4 py-4 text-xs font-semibold text-zinc-400 uppercase tracking-wider">
+                    ID
+                  </th>
+                  <th className="text-left px-4 py-4 text-xs font-semibold text-zinc-400 uppercase tracking-wider">
                     <div className="flex items-center gap-2"><CreditCard className="h-3.5 w-3.5" />Дүн</div>
                   </th>
                   <th className="text-left px-4 py-4 text-xs font-semibold text-zinc-400 uppercase tracking-wider">
@@ -294,6 +298,9 @@ export default function PaymentsPage() {
                           {log.userEmail || '—'}
                         </span>
                       </div>
+                    </td>
+                    <td className="px-4 py-4">
+                      <span className="text-zinc-400 text-sm font-mono">{log.internalUserId || '—'}</span>
                     </td>
                     <td className="px-4 py-4">
                       <span className="text-cyan-400 font-bold">
