@@ -2,11 +2,13 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth, firestore } from "@/firebase/server";
 import { z } from "zod";
 import { deleteFromR2Server } from "@/app/actions/upload";
+import { mangaGenreEnum } from "@/validation/mangaSchema";
 
 const updateMangaSchema = z.object({
   title: z.string().min(1, "Title is required").optional(),
   type: z.enum(["manga", "manhwa", "manhua", "webtoon", "comic"]).optional(),
   status: z.enum(["ongoing", "finished"]).optional(),
+  genres: z.array(mangaGenreEnum).max(5, "Maximum 5 genres allowed").optional(), // ← НЭМЭГДСЭН
   description: z.string().optional(),
   coverImage: z.string().optional(),
   mangaImage: z.string().optional(),
@@ -23,19 +25,17 @@ export async function GET(
     const doc = await firestore.collection("mangas").doc(mangaId).get();
 
     if (!doc.exists) {
-      return NextResponse.json(
-        { error: "Manga not found" },
-        { status: 404 }
-      );
+      return NextResponse.json({ error: "Manga not found" }, { status: 404 });
     }
 
     const data = doc.data();
-    
+
     const manga = {
       id: doc.id,
       title: data?.title || "",
       type: data?.type || "manga",
       status: data?.status || "ongoing",
+      genres: data?.genres || [], // ← НЭМЭГДСЭН
       description: data?.description || "",
       coverImage: data?.coverImage || "",
       mangaImage: data?.mangaImage || "",
@@ -49,10 +49,7 @@ export async function GET(
     return NextResponse.json({ data: manga });
   } catch (error) {
     console.error("Error fetching manga:", error);
-    return NextResponse.json(
-      { error: "Failed to fetch manga" },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "Failed to fetch manga" }, { status: 500 });
   }
 }
 
@@ -87,9 +84,9 @@ export async function PUT(
 
     if (!validation.success) {
       return NextResponse.json(
-        { 
-          error: true, 
-          message: validation.error.issues[0]?.message || "Invalid data" 
+        {
+          error: true,
+          message: validation.error.issues[0]?.message || "Invalid data",
         },
         { status: 400 }
       );
@@ -161,7 +158,6 @@ export async function DELETE(
     const mangaData = existingDoc.data();
     let deletedFiles = 0;
 
-    // Delete all chapter images from R2
     const chaptersSnapshot = await firestore
       .collection("mangas")
       .doc(mangaId)
@@ -170,7 +166,7 @@ export async function DELETE(
 
     for (const chapterDoc of chaptersSnapshot.docs) {
       const chapterData = chapterDoc.data();
-      
+
       if (chapterData?.images && Array.isArray(chapterData.images)) {
         for (const imageUrl of chapterData.images) {
           try {
@@ -183,12 +179,11 @@ export async function DELETE(
           }
         }
       }
-      
+
       await chapterDoc.ref.delete();
     }
 
-    // Delete manga images from R2
-    const imageFields = ['coverImage', 'mangaImage', 'avatarImage'];
+    const imageFields = ["coverImage", "mangaImage", "avatarImage"];
     for (const field of imageFields) {
       if (mangaData?.[field]) {
         try {
@@ -202,7 +197,6 @@ export async function DELETE(
       }
     }
 
-    // Delete manga document
     await firestore.collection("mangas").doc(mangaId).delete();
 
     return NextResponse.json({

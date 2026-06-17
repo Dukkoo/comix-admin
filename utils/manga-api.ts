@@ -1,9 +1,28 @@
-// utils/manga-api.ts
+export type MangaGenre =
+  | "action"
+  | "adventure"
+  | "comedy"
+  | "romance"
+  | "horror"
+  | "fantasy"
+  | "sci-fi"
+  | "mystery"
+  | "thriller"
+  | "drama"
+  | "sports"
+  | "regression"
+  | "system"
+  | "villain"
+  | "murim"
+  | "reincarnation"
+  | "magic";
+
 export interface Manga {
   id: string;
   title: string;
   type: "manga" | "manhwa" | "manhua" | "webtoon" | "comic";
   status: "ongoing" | "finished";
+  genres?: MangaGenre[];
   description?: string;
   coverImage?: string;
   mangaImage?: string;
@@ -24,7 +43,8 @@ export interface MangaResponse {
 export const fetchMangas = async (
   page: number = 1,
   limit: number = 10,
-  searchTerm?: string
+  searchTerm?: string,
+  genre?: MangaGenre
 ): Promise<MangaResponse> => {
   try {
     const params = new URLSearchParams({
@@ -33,18 +53,22 @@ export const fetchMangas = async (
     });
 
     if (searchTerm && searchTerm.trim()) {
-      params.append('search', searchTerm.trim());
+      params.append("search", searchTerm.trim());
+    }
+
+    if (genre) {
+      params.append("genre", genre);
     }
 
     const response = await fetch(`/api/mangas?${params.toString()}`);
-    
+
     if (!response.ok) {
-      throw new Error('Failed to fetch mangas');
+      throw new Error("Failed to fetch mangas");
     }
 
     return await response.json();
   } catch (error) {
-    console.error('Error fetching mangas:', error);
+    console.error("Error fetching mangas:", error);
     return {
       data: [],
       totalPages: 0,
@@ -54,19 +78,21 @@ export const fetchMangas = async (
   }
 };
 
-export const fetchMangaById = async (id: string): Promise<{ data?: Manga; error?: string }> => {
+export const fetchMangaById = async (
+  id: string
+): Promise<{ data?: Manga; error?: string }> => {
   try {
     const response = await fetch(`/api/mangas/${id}`);
-    
+
     if (!response.ok) {
       const errorData = await response.json();
-      return { error: errorData.error || 'Failed to fetch manga' };
+      return { error: errorData.error || "Failed to fetch manga" };
     }
 
     return await response.json();
   } catch (error) {
-    console.error('Error fetching manga:', error);
-    return { error: 'Failed to fetch manga' };
+    console.error("Error fetching manga:", error);
+    return { error: "Failed to fetch manga" };
   }
 };
 
@@ -76,28 +102,29 @@ export const createManga = async (
     title: string;
     type: "manga" | "manhwa" | "manhua" | "webtoon" | "comic";
     status: "ongoing" | "finished";
+    genres?: MangaGenre[];
     coverImage?: string;
     mangaImage?: string;
-    avatarImage?: string; // Added this field
+    avatarImage?: string;
     description?: string;
     chapters?: number;
   },
   authToken: string
 ): Promise<{ error: boolean; message: string; id?: string }> => {
   try {
-    const response = await fetch('/api/mangas', {
-      method: 'POST',
+    const response = await fetch("/api/mangas", {
+      method: "POST",
       headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${authToken}`,
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${authToken}`,
       },
       body: JSON.stringify(data),
     });
 
     return await response.json();
   } catch (error) {
-    console.error('Error creating manga:', error);
-    return { error: true, message: 'Failed to create manga' };
+    console.error("Error creating manga:", error);
+    return { error: true, message: "Failed to create manga" };
   }
 };
 
@@ -108,18 +135,18 @@ export const updateManga = async (
 ): Promise<{ error: boolean; message: string }> => {
   try {
     const response = await fetch(`/api/mangas/${mangaId}`, {
-      method: 'PUT',
+      method: "PUT",
       headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${authToken}`,
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${authToken}`,
       },
       body: JSON.stringify(data),
     });
 
     return await response.json();
   } catch (error) {
-    console.error('Error updating manga:', error);
-    return { error: true, message: 'Failed to update manga' };
+    console.error("Error updating manga:", error);
+    return { error: true, message: "Failed to update manga" };
   }
 };
 
@@ -129,15 +156,15 @@ export const deleteManga = async (
 ): Promise<{ error: boolean; message: string }> => {
   try {
     const response = await fetch(`/api/mangas/${mangaId}`, {
-      method: 'DELETE',
+      method: "DELETE",
       headers: {
-        'Authorization': `Bearer ${authToken}`,
+        Authorization: `Bearer ${authToken}`,
       },
     });
 
     return await response.json();
   } catch (error) {
-    console.error('Error deleting manga:', error);
-    return { error: true, message: 'Failed to delete manga' };
+    console.error("Error deleting manga:", error);
+    return { error: true, message: "Failed to delete manga" };
   }
 };

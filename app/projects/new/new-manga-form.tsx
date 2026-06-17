@@ -12,7 +12,15 @@ import { useState, useRef } from "react";
 import { toast } from "sonner";
 import { createManga } from "@/utils/manga-api";
 import { uploadToR2Server } from "@/app/actions/upload";
+import { MangaGenre, GENRE_LABELS } from "@/validation/mangaSchema";
 import Image from "next/image";
+
+const ALL_GENRES: MangaGenre[] = [
+  "action", "adventure", "comedy", "romance", "horror",
+  "fantasy", "sci-fi", "mystery", "thriller", "drama",
+  "sports", "regression", "system", "villain", "murim",
+  "reincarnation", "magic",
+];
 
 export default function NewMangaForm() {
   const auth = useAuth();
@@ -24,11 +32,14 @@ export default function NewMangaForm() {
     status: "ongoing",
     description: "",
   });
-  
+
+  // Genre state
+  const [selectedGenres, setSelectedGenres] = useState<MangaGenre[]>([]);
+
   const [coverImageFile, setCoverImageFile] = useState<File | null>(null);
   const [mangaImageFile, setMangaImageFile] = useState<File | null>(null);
   const [avatarImageFile, setAvatarImageFile] = useState<File | null>(null);
-  
+
   const [coverPreview, setCoverPreview] = useState<string>("");
   const [mangaPreview, setMangaPreview] = useState<string>("");
   const [avatarPreview, setAvatarPreview] = useState<string>("");
@@ -39,13 +50,26 @@ export default function NewMangaForm() {
 
   const [mangaId] = useState(() => Math.floor(1000 + Math.random() * 9000).toString());
 
+  const toggleGenre = (genre: MangaGenre) => {
+    setSelectedGenres((prev) => {
+      if (prev.includes(genre)) {
+        return prev.filter((g) => g !== genre);
+      }
+      if (prev.length >= 5) {
+        toast.warning("Хамгийн ихдээ 5 төрөл сонгоно уу");
+        return prev;
+      }
+      return [...prev, genre];
+    });
+  };
+
   const handleFileSelect = (
-    file: File | null, 
+    file: File | null,
     setFile: (file: File | null) => void,
     setPreview: (url: string) => void
   ) => {
     if (!file) return;
-    
+
     if (!file.type.startsWith('image/')) {
       toast.error("Please select an image file");
       return;
@@ -128,6 +152,7 @@ export default function NewMangaForm() {
         title: formData.title,
         type: formData.type as "manga" | "manhwa" | "manhua" | "webtoon" | "comic",
         status: formData.status as "ongoing" | "finished",
+        genres: selectedGenres, // ← НЭМЭГДСЭН
         description: formData.description,
         coverImage: coverImageUrl,
         mangaImage: mangaImageUrl,
@@ -161,14 +186,14 @@ export default function NewMangaForm() {
     }
   };
 
-  const ImageUploadBox = ({ 
-    label, 
-    preview, 
-    inputRef, 
+  const ImageUploadBox = ({
+    label,
+    preview,
+    inputRef,
     file,
     setFile,
-    setPreview 
-  }: { 
+    setPreview
+  }: {
     label: string;
     preview: string;
     inputRef: React.RefObject<HTMLInputElement>;
@@ -187,7 +212,7 @@ export default function NewMangaForm() {
         onChange={(e) => handleFileSelect(e.target.files?.[0] || null, setFile, setPreview)}
         className="hidden"
       />
-      
+
       {!preview ? (
         <Button
           type="button"
@@ -297,8 +322,42 @@ export default function NewMangaForm() {
               </div>
             </div>
 
+            {/* ===== GENRES ===== */}
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <Label className="text-sm font-semibold text-zinc-300 uppercase tracking-wider">
+                  Жанр
+                </Label>
+                <span className="text-xs text-zinc-400">
+                  {selectedGenres.length}/5 сонгогдсон
+                </span>
+              </div>
+
+              <div className="flex flex-wrap gap-2">
+                {ALL_GENRES.map((genre) => {
+                  const isSelected = selectedGenres.includes(genre);
+                  return (
+                    <button
+                      key={genre}
+                      type="button"
+                      onClick={() => toggleGenre(genre)}
+                      disabled={loading}
+                      className={`px-3 py-1.5 rounded-full text-sm font-medium transition-all duration-200 border cursor-pointer
+                        ${isSelected
+                          ? "bg-cyan-600 border-cyan-500 text-white"
+                          : "bg-zinc-800 border-zinc-600 text-zinc-400 hover:border-cyan-600 hover:text-zinc-200"
+                        }
+                        disabled:opacity-50 disabled:cursor-not-allowed`}
+                    >
+                      {GENRE_LABELS[genre]}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-              <ImageUploadBox 
+              <ImageUploadBox
                 label="Зурагт номын зураг"
                 preview={mangaPreview}
                 inputRef={mangaInputRef}
@@ -306,7 +365,7 @@ export default function NewMangaForm() {
                 setFile={setMangaImageFile}
                 setPreview={setMangaPreview}
               />
-              <ImageUploadBox 
+              <ImageUploadBox
                 label="Арын зураг"
                 preview={coverPreview}
                 inputRef={coverInputRef}
@@ -314,7 +373,7 @@ export default function NewMangaForm() {
                 setFile={setCoverImageFile}
                 setPreview={setCoverPreview}
               />
-              <ImageUploadBox 
+              <ImageUploadBox
                 label="Аватар зураг"
                 preview={avatarPreview}
                 inputRef={avatarInputRef}

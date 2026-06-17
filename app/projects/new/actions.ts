@@ -3,8 +3,8 @@
 import { auth, firestore } from "@/firebase/server";
 import { z } from "zod";
 import { revalidatePath } from "next/cache";
+import { mangaGenreEnum } from "@/validation/mangaSchema";
 
-// Updated schema to include avatar image
 const mangaSchema = z.object({
   id: z.string().min(1, "ID is required"),
   title: z.string().min(1, "Title is required"),
@@ -14,6 +14,7 @@ const mangaSchema = z.object({
   status: z.enum(["ongoing", "finished"], {
     required_error: "Status is required",
   }).default("ongoing"),
+  genres: z.array(mangaGenreEnum).max(5, "Maximum 5 genres allowed").optional(), // ← НЭМЭГДСЭН
   description: z.string().optional(),
   coverImage: z.string().optional(),
   mangaImage: z.string().optional(),
@@ -30,10 +31,7 @@ export const createManga = async (
     const verifiedToken = await auth.verifyIdToken(authToken);
 
     if (!verifiedToken.admin) {
-      return {
-        error: true,
-        message: "Unauthorized",
-      };
+      return { error: true, message: "Unauthorized" };
     }
 
     const validation = mangaSchema.safeParse(mangaData);
@@ -44,20 +42,16 @@ export const createManga = async (
       };
     }
 
-    // Check if manga with this ID already exists
     const existingManga = await firestore.collection("mangas").doc(validation.data.id).get();
     if (existingManga.exists) {
-      return {
-        error: true,
-        message: "Manga with this ID already exists",
-      };
+      return { error: true, message: "Manga with this ID already exists" };
     }
 
-    // Use the provided ID from the form (4-digit random ID)
     await firestore.collection("mangas").doc(validation.data.id).set({
       title: validation.data.title,
       type: validation.data.type,
       status: validation.data.status,
+      genres: validation.data.genres || [], // ← НЭМЭГДСЭН
       description: validation.data.description || "",
       coverImage: validation.data.coverImage || "",
       mangaImage: validation.data.mangaImage || "",
@@ -77,10 +71,7 @@ export const createManga = async (
     };
   } catch (error) {
     console.error("Error creating manga:", error);
-    return {
-      error: true,
-      message: "Failed to create manga",
-    };
+    return { error: true, message: "Failed to create manga" };
   }
 };
 
@@ -99,10 +90,7 @@ export const updateManga = async (
     const verifiedToken = await auth.verifyIdToken(authToken);
 
     if (!verifiedToken.admin) {
-      return {
-        error: true,
-        message: "Unauthorized",
-      };
+      return { error: true, message: "Unauthorized" };
     }
 
     const validation = mangaSchema.partial().safeParse(mangaData);
@@ -121,16 +109,10 @@ export const updateManga = async (
     revalidatePath("/projects");
     revalidatePath(`/projects/edit/${mangaId}`);
 
-    return {
-      error: false,
-      message: "Manga updated successfully",
-    };
+    return { error: false, message: "Manga updated successfully" };
   } catch (error) {
     console.error("Error updating manga:", error);
-    return {
-      error: true,
-      message: "Failed to update manga",
-    };
+    return { error: true, message: "Failed to update manga" };
   }
 };
 
@@ -140,22 +122,15 @@ export const deleteManga = async (mangaId: string, authToken: string) => {
     const verifiedToken = await auth.verifyIdToken(authToken);
 
     if (!verifiedToken.admin) {
-      return {
-        error: true,
-        message: "Unauthorized",
-      };
+      return { error: true, message: "Unauthorized" };
     }
 
     const schema = z.string().min(1);
     const validation = schema.safeParse(mangaId);
     if (!validation.success) {
-      return {
-        error: true,
-        message: "Invalid manga ID",
-      };
+      return { error: true, message: "Invalid manga ID" };
     }
 
-    // Also delete all chapters associated with this manga
     const chaptersSnapshot = await firestore
       .collection("mangas")
       .doc(mangaId)
@@ -163,15 +138,8 @@ export const deleteManga = async (mangaId: string, authToken: string) => {
       .get();
 
     const batch = firestore.batch();
-    
-    // Delete manga
     batch.delete(firestore.collection("mangas").doc(mangaId));
-    
-    // Delete all chapters from subcollection
-    chaptersSnapshot.docs.forEach((doc) => {
-      batch.delete(doc.ref);
-    });
-
+    chaptersSnapshot.docs.forEach((doc) => batch.delete(doc.ref));
     await batch.commit();
 
     revalidatePath("/projects");
@@ -182,14 +150,11 @@ export const deleteManga = async (mangaId: string, authToken: string) => {
     };
   } catch (error) {
     console.error("Error deleting manga:", error);
-    return {
-      error: true,
-      message: "Failed to delete manga",
-    };
+    return { error: true, message: "Failed to delete manga" };
   }
 };
 
-// Update manga images (now includes avatar image)
+// Update manga images
 export const updateMangaImages = async (
   {
     mangaId,
@@ -208,42 +173,23 @@ export const updateMangaImages = async (
     const verifiedToken = await auth.verifyIdToken(authToken);
 
     if (!verifiedToken.admin) {
-      return {
-        error: true,
-        message: "Unauthorized",
-      };
+      return { error: true, message: "Unauthorized" };
     }
 
-    const updateData: any = {
-      updatedAt: new Date(),
-    };
+    const updateData: any = { updatedAt: new Date() };
 
-    if (coverImage !== undefined) {
-      updateData.coverImage = coverImage;
-    }
-
-    if (mangaImage !== undefined) {
-      updateData.mangaImage = mangaImage;
-    }
-
-    if (avatarImage !== undefined) {
-      updateData.avatarImage = avatarImage;
-    }
+    if (coverImage !== undefined) updateData.coverImage = coverImage;
+    if (mangaImage !== undefined) updateData.mangaImage = mangaImage;
+    if (avatarImage !== undefined) updateData.avatarImage = avatarImage;
 
     await firestore.collection("mangas").doc(mangaId).update(updateData);
 
     revalidatePath("/projects");
     revalidatePath(`/projects/edit/${mangaId}`);
 
-    return {
-      error: false,
-      message: "Images updated successfully",
-    };
+    return { error: false, message: "Images updated successfully" };
   } catch (error) {
     console.error("Error updating images:", error);
-    return {
-      error: true,
-      message: "Failed to update images",
-    };
+    return { error: true, message: "Failed to update images" };
   }
 };
