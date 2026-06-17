@@ -15,7 +15,10 @@ export type MangaGenre =
   | "villain"
   | "murim"
   | "reincarnation"
-  | "magic";
+  | "magic"
+  | "revenge"
+  | "genius-mc";
+  
 
 export interface Manga {
   id: string;
