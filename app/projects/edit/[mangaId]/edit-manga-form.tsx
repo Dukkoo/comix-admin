@@ -23,7 +23,7 @@ const ALL_GENRES: MangaGenre[] = [
   "action", "adventure", "comedy", "romance", "horror",
   "fantasy", "sci-fi", "mystery", "thriller", "drama",
   "sports", "regression", "system", "villain", "murim",
-  "reincarnation", "magic",
+  "reincarnation", "magic", "revenge", "genius-mc",
 ];
 
 export default function EditMangaForm({ mangaId }: EditMangaFormProps) {

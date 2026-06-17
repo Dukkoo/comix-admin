@@ -18,6 +18,8 @@ export const mangaGenreEnum = z.enum([
   "murim",
   "reincarnation",
   "magic",
+  "revenge",
+  "genius-mc",
 ]);
 
 export type MangaGenre = z.infer<typeof mangaGenreEnum>;
@@ -40,6 +42,8 @@ export const GENRE_LABELS: Record<MangaGenre, string> = {
   murim: "Мурим",
   reincarnation: "Дахин төрөлт",
   magic: "Ид шид",
+  revenge: "Өшөө авалт",
+  "genius-mc": "Гоц гол дүр",
 };
 
 export const mangaSchema = z.object({
