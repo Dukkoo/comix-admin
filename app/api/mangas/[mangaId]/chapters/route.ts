@@ -45,6 +45,7 @@ export async function GET(
         chapterNumber: data.chapterNumber !== undefined ? data.chapterNumber : parseInt(doc.id),
         mangaId: mangaId,
         createdAt: data.createdAt || null,
+        isFree: data.isFree === true,
       });
     });
 
@@ -102,7 +103,7 @@ export async function POST(
       );
     }
 
-    const { chapterNumber } = validation.data;
+    const { chapterNumber, isFree } = validation.data;
 
     // Check if chapter already exists
     const existingChapter = await firestore
@@ -121,6 +122,7 @@ export async function POST(
 
     const chapterData = {
       chapterNumber,
+      isFree: isFree || false,
       createdAt: new Date().toISOString(),
     };
 

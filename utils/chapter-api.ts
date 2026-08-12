@@ -1,9 +1,9 @@
-// utils/chapter-api.ts
 export interface Chapter {
   id: string;
   chapterNumber: number;
   mangaId: string;
   createdAt?: string;
+  isFree?: boolean;
 }
 
 export interface ChapterResponse {
@@ -16,9 +16,8 @@ export interface ChapterResponse {
 export async function fetchChapters(mangaId: string, page: number = 1, pageSize: number = 10): Promise<ChapterResponse> {
   try {
     const url = `/api/mangas/${mangaId}/chapters?page=${page}&pageSize=${pageSize}`;
-    
     const response = await fetch(url);
-    
+
     if (!response.ok) {
       return {
         data: [],
@@ -27,7 +26,7 @@ export async function fetchChapters(mangaId: string, page: number = 1, pageSize:
         currentPage: page,
       };
     }
-    
+
     const data = await response.json();
     return data;
   } catch (error) {

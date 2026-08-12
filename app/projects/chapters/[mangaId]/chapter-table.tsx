@@ -1,6 +1,6 @@
 "use client";
 
-import { Edit2, Plus, Trash2, Search } from "lucide-react";
+import { Edit2, Plus, Trash2, Search, Gift } from "lucide-react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -17,7 +17,7 @@ import { useAuth } from '@/app/providers';
 import { toast } from "sonner";
 import { useRouter } from "next/navigation";
 import { useState, useEffect } from "react";
-import { fetchChapters, deleteChapter, Chapter } from "@/utils/chapter-api";
+import { fetchChapters, deleteChapter, updateChapter, Chapter } from "@/utils/chapter-api";
 
 export default function ChapterTable({ 
   mangaId, 
@@ -35,6 +35,7 @@ export default function ChapterTable({
   const [searchQuery, setSearchQuery] = useState("");
   const [totalPages, setTotalPages] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [togglingId, setTogglingId] = useState<string | null>(null);
   const [deleteDialog, setDeleteDialog] = useState<{
     isOpen: boolean;
     chapterId: string;
@@ -133,6 +134,54 @@ export default function ChapterTable({
     }
   };
 
+  const handleToggleFree = async (chapter: Chapter) => {
+    try {
+      setTogglingId(chapter.id);
+      const token = await auth?.currentUser?.getIdToken();
+      if (!token) {
+        toast.error("Authentication required");
+        return;
+      }
+
+      const newIsFree = !chapter.isFree;
+
+      const response = await updateChapter(
+        mangaId,
+        chapter.id,
+        {
+          chapterNumber: chapter.chapterNumber,
+          mangaId,
+          isFree: newIsFree,
+        },
+        token
+      );
+
+      if (response.error) {
+        toast.error("Failed to update chapter", {
+          description: response.message,
+        });
+        return;
+      }
+
+      const updateLocal = (list: Chapter[]) =>
+        list.map((ch) => (ch.id === chapter.id ? { ...ch, isFree: newIsFree } : ch));
+
+      setChapters((prev) => updateLocal(prev));
+      setFilteredChapters((prev) => updateLocal(prev));
+
+      toast.success(
+        newIsFree
+          ? `Бүлэг ${chapter.chapterNumber} үнэгүй боллоо`
+          : `Бүлэг ${chapter.chapterNumber} эрхтэй боллоо`
+      );
+    } catch (error) {
+      console.error("Error toggling isFree:", error);
+      toast.error("Failed to update chapter");
+    } finally {
+      setTogglingId(null);
+    }
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen bg-zinc-900 flex items-center justify-center">
@@ -210,14 +259,38 @@ export default function ChapterTable({
                 <CardContent className="p-0 h-full">
                   <div className="flex items-center justify-between w-full h-full px-4">
                     {/* Chapter Info */}
-                    <div className="flex items-center">
+                    <div className="flex items-center gap-3">
                       <h3 className="font-bold text-white text-lg leading-none">
                         Бүлэг : {chapter.chapterNumber}
                       </h3>
+                      {chapter.isFree && (
+                        <span className="flex items-center gap-1 text-xs font-medium text-emerald-400 bg-emerald-500/10 border border-emerald-500/30 px-2 py-0.5 rounded-full">
+                          <Gift className="w-3 h-3" />
+                          Үнэгүй
+                        </span>
+                      )}
                     </div>
 
                     {/* Actions */}
                     <div className="flex items-center space-x-2">
+                      {/* isFree toggle */}
+                      <button
+                        type="button"
+                        onClick={() => handleToggleFree(chapter)}
+                        disabled={togglingId === chapter.id}
+                        title="Үнэгүй эсэхийг солих"
+                        className={`relative w-10 h-5.5 rounded-full transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${
+                          chapter.isFree ? "bg-cyan-600" : "bg-zinc-600"
+                        }`}
+                        style={{ width: "2.5rem", height: "1.375rem" }}
+                      >
+                        <span
+                          className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full transition-transform ${
+                            chapter.isFree ? "translate-x-4" : ""
+                          }`}
+                        />
+                      </button>
+
                       <Button 
                         asChild 
                         size="sm" 

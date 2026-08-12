@@ -22,25 +22,6 @@ export async function GET(
     const decodedToken = await auth.verifyIdToken(token);
     const userId = decodedToken.uid;
 
-    const userDoc = await firestore.collection('users').doc(userId).get();
-    const userData = userDoc.data();
-    
-    let isSubscribed = false;
-    if (decodedToken.admin) {
-      isSubscribed = true;
-    } else if (userData?.subscriptionStatus === 'subscribed' && userData?.subscriptionEndDate) {
-      const endDate = new Date(userData.subscriptionEndDate);
-      const now = new Date();
-      isSubscribed = endDate > now;
-    }
-
-    if (!isSubscribed) {
-      return NextResponse.json(
-        { error: 'Subscription required', message: 'This content requires an active subscription' },
-        { status: 403 }
-      );
-    }
-
     const doc = await firestore
       .collection("mangas")
       .doc(mangaId)
@@ -56,7 +37,29 @@ export async function GET(
     }
 
     const data = doc.data();
-    
+    const isFreeChapter = data?.isFree === true;
+
+    if (!isFreeChapter) {
+      const userDoc = await firestore.collection('users').doc(userId).get();
+      const userData = userDoc.data();
+
+      let isSubscribed = false;
+      if (decodedToken.admin) {
+        isSubscribed = true;
+      } else if (userData?.subscriptionStatus === 'subscribed' && userData?.subscriptionEndDate) {
+        const endDate = new Date(userData.subscriptionEndDate);
+        const now = new Date();
+        isSubscribed = endDate > now;
+      }
+
+      if (!isSubscribed) {
+        return NextResponse.json(
+          { error: 'Subscription required', message: 'This content requires an active subscription' },
+          { status: 403 }
+        );
+      }
+    }
+
     const chapter = {
       id: doc.id,
       chapterNumber: data?.chapterNumber || parseInt(doc.id),
@@ -65,6 +68,7 @@ export async function GET(
       title: data?.title || `Chapter ${data?.chapterNumber || doc.id}`,
       publishedAt: data?.publishedAt || null,
       createdAt: data?.createdAt || null,
+      isFree: isFreeChapter,
     };
 
     try {
@@ -138,7 +142,7 @@ export async function PUT(
       );
     }
 
-    const { chapterNumber } = validation.data;
+    const { chapterNumber, isFree } = validation.data;
 
     await firestore
       .collection("mangas")
@@ -147,6 +151,7 @@ export async function PUT(
       .doc(chapterId)
       .update({
         chapterNumber,
+        isFree,
       });
 
     return NextResponse.json({
@@ -203,7 +208,6 @@ export async function DELETE(
     const chapterData = existingDoc.data();
     let deletedImages = 0;
 
-    // Delete images from R2
     if (chapterData?.images && Array.isArray(chapterData.images)) {
       for (const imageUrl of chapterData.images) {
         try {
@@ -217,10 +221,8 @@ export async function DELETE(
       }
     }
 
-    // Delete chapter document
     await existingDoc.ref.delete();
 
-    // Update manga chapter count
     const chaptersSnapshot = await firestore
       .collection("mangas")
       .doc(mangaId)
