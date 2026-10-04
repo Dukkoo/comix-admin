@@ -1,7 +1,7 @@
 'use client';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Home, Users, BookOpen, Store, LogOut, Image, Star, Hash, Receipt } from 'lucide-react';
+import { Home, Users, BookOpen, Store, LogOut, Image, Star, Hash, Receipt, UserCircle } from 'lucide-react';
 import { useAuth } from '@/app/providers';
 import { cn } from '@/lib/utils';
 
@@ -13,6 +13,7 @@ const navigation = [
   { name: 'Алдартай', href: '/popular', icon: Star },
   { name: 'Бүтээгдэхүүн', href: '/#', icon: Store },
   { name: 'Онцлох', href: '/featured', icon: Hash },
+  { name: 'Хэрэглэгчийн профайл', href: '/user-profile', icon: UserCircle },
   { name: 'Төлбөрийн бүртгэл', href: '/payments', icon: Receipt },
 ];
 
