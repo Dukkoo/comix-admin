@@ -10,49 +10,39 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const token = authHeader.split(" ")[1];
-    const verifiedToken = await auth.verifyIdToken(token);
-
+    const verifiedToken = await auth.verifyIdToken(authHeader.split(" ")[1]);
     if (!verifiedToken.admin) {
       return NextResponse.json({ error: "Admin required" }, { status: 403 });
     }
 
-    // Suspicious users API-тай ижил query
+    // Suspicious users API-тай яг ижил query (orderBy-тай)
     const usersSnapshot = await firestore
       .collection("users")
       .where("subscriptionStatus", "==", "subscribed")
       .where("deviceCount", ">=", 3)
+      .orderBy("deviceCount", "desc")
       .get();
 
-    let clearedCount = 0;
-    let totalDevicesCleared = 0;
+    const docs = usersSnapshot.docs;
 
-    for (const userDoc of usersSnapshot.docs) {
-      const devicesRef = userDoc.ref.collection("devices");
-      const devicesSnapshot = await devicesRef.get();
-
-      if (devicesSnapshot.size > 0) {
-        const batch = firestore.batch();
-        devicesSnapshot.docs.forEach((doc) => {
-          batch.delete(doc.ref);
-        });
-        await batch.commit();
-
-        // deviceCount-г 0 болгох
-        await userDoc.ref.update({ deviceCount: 0 });
-
-        clearedCount++;
-        totalDevicesCleared += devicesSnapshot.size;
-      }
+    // Batch лимит 500 тул 450-аар хуваана
+    for (let i = 0; i < docs.length; i += 450) {
+      const batch = firestore.batch();
+      docs.slice(i, i + 450).forEach((d) => {
+        batch.update(d.ref, { devices: [], deviceCount: 0 });
+      });
+      await batch.commit();
     }
 
-    return NextResponse.json({ 
-      success: true, 
-      clearedCount,
-      totalDevicesCleared
-    });
-  } catch (error) {
+    return NextResponse.json({ success: true, clearedCount: docs.length });
+  } catch (error: any) {
     console.error("Error clearing all devices:", error);
-    return NextResponse.json({ error: "Failed to clear devices" }, { status: 500 });
+    return NextResponse.json(
+      {
+        error: "Failed to clear devices",
+        details: error?.message ?? String(error),
+      },
+      { status: 500 }
+    );
   }
 }

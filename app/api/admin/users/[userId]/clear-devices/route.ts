@@ -1,5 +1,3 @@
-// app/api/admin/users/[userId]/clear-devices/route.ts
-
 import { NextRequest, NextResponse } from "next/server";
 import { auth, firestore } from "@/firebase/server";
 
@@ -15,30 +13,22 @@ export async function POST(
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const token = authHeader.split(" ")[1];
-    const verifiedToken = await auth.verifyIdToken(token);
-
+    const verifiedToken = await auth.verifyIdToken(authHeader.split(" ")[1]);
     if (!verifiedToken.admin) {
       return NextResponse.json({ error: "Admin required" }, { status: 403 });
     }
 
     const userRef = firestore.collection("users").doc(userId);
-    const devicesRef = userRef.collection("devices");
-    const devicesSnapshot = await devicesRef.get();
+    const userSnap = await userRef.get();
+    if (!userSnap.exists) {
+      return NextResponse.json({ error: "User not found" }, { status: 404 });
+    }
 
-    const batch = firestore.batch();
-    devicesSnapshot.docs.forEach((doc) => {
-      batch.delete(doc.ref);
-    });
-    await batch.commit();
+    const clearedCount = (userSnap.data()?.devices ?? []).length;
 
-    // deviceCount-г 0 болгох
-    await userRef.update({ deviceCount: 0 });
+    await userRef.update({ devices: [], deviceCount: 0 });
 
-    return NextResponse.json({ 
-      success: true, 
-      clearedCount: devicesSnapshot.size 
-    });
+    return NextResponse.json({ success: true, clearedCount });
   } catch (error) {
     console.error("Error clearing devices:", error);
     return NextResponse.json({ error: "Failed to clear devices" }, { status: 500 });

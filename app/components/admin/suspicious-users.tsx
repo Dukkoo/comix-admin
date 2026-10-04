@@ -191,7 +191,7 @@ export default function SuspiciousUsers() {
       }
 
       const data = await response.json();
-      toast.success(`${data.clearedCount || users.length} хэрэглэгчийн төхөөрөмж устгагдлаа`);
+      toast.success(`${data.clearedCount ?? 0} хэрэглэгчийн төхөөрөмж устгагдлаа`); // ← ЗАСВАР
       await fetchSuspiciousUsers();
     } catch (error) {
       console.error("Error clearing all devices:", error);
