@@ -4,20 +4,19 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { getAuth } from "firebase/auth";
-import { 
-  AlertTriangle, 
-  Monitor, 
-  Ban, 
-  Eye, 
+import {
+  AlertTriangle,
+  Monitor,
+  Ban,
+  Eye,
   RefreshCw,
   Users,
   ChevronDown,
   ChevronUp,
-  Trash2
+  Trash2,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 
@@ -36,6 +35,7 @@ export default function SuspiciousUsers() {
   const [banning, setBanning] = useState<string | null>(null);
   const [clearingAll, setClearingAll] = useState(false);
   const [clearingUser, setClearingUser] = useState<string | null>(null);
+  // Анхнаасаа хаалттай. Нээх үед л (эхний удаа) өгөгдөл татна.
   const [isOpen, setIsOpen] = useState(false);
   const [hasFetched, setHasFetched] = useState(false);
 
@@ -57,7 +57,7 @@ export default function SuspiciousUsers() {
     try {
       setLoading(true);
       const token = await getAuthToken();
-      
+
       if (!token) {
         toast.error("Authentication required");
         return;
@@ -84,11 +84,12 @@ export default function SuspiciousUsers() {
     }
   };
 
+  // Нээх үед л, зөвхөн эхний удаа татна
   const handleToggle = () => {
-    const newIsOpen = !isOpen;
-    setIsOpen(newIsOpen);
-    
-    if (newIsOpen && !hasFetched) {
+    const next = !isOpen;
+    setIsOpen(next);
+
+    if (next && !hasFetched) {
       fetchSuspiciousUsers();
     }
   };
@@ -99,7 +100,7 @@ export default function SuspiciousUsers() {
     setBanning(userId);
     try {
       const token = await getAuthToken();
-      
+
       if (!token) {
         toast.error("Authentication required");
         return;
@@ -138,7 +139,7 @@ export default function SuspiciousUsers() {
     setClearingUser(userId);
     try {
       const token = await getAuthToken();
-      
+
       if (!token) {
         toast.error("Authentication required");
         return;
@@ -173,7 +174,7 @@ export default function SuspiciousUsers() {
     setClearingAll(true);
     try {
       const token = await getAuthToken();
-      
+
       if (!token) {
         toast.error("Authentication required");
         return;
@@ -191,7 +192,7 @@ export default function SuspiciousUsers() {
       }
 
       const data = await response.json();
-      toast.success(`${data.clearedCount ?? 0} хэрэглэгчийн төхөөрөмж устгагдлаа`); // ← ЗАСВАР
+      toast.success(`${data.clearedCount ?? 0} хэрэглэгчийн төхөөрөмж устгагдлаа`);
       await fetchSuspiciousUsers();
     } catch (error) {
       console.error("Error clearing all devices:", error);
@@ -202,77 +203,96 @@ export default function SuspiciousUsers() {
   };
 
   return (
-    <Card className="bg-zinc-800/50 border-zinc-700/50">
-      <CardHeader 
-        className="flex flex-row items-center justify-between cursor-pointer hover:bg-zinc-700/20 transition-colors rounded-t-lg"
-        onClick={handleToggle}
-      >
-        <CardTitle className="flex items-center gap-2 text-white">
-          <AlertTriangle className="w-5 h-5 text-yellow-400" />
-          Сэжигтэй хэрэглэгчид (3+ төхөөрөмж)
+    <section className="cyber-panel cyber-panel-warn flex h-full flex-col">
+      {/* Header */}
+      <div className="flex items-center gap-2 border-b border-white/5 p-4">
+        <button
+          type="button"
+          onClick={handleToggle}
+          aria-expanded={isOpen}
+          className="flex flex-1 items-center gap-2 text-left"
+        >
+          <AlertTriangle className="h-5 w-5 shrink-0 text-[#ffd23f]" />
+          <span className="font-display text-lg font-semibold text-white">
+            Сэжигтэй хэрэглэгчид (3+ төхөөрөмж)
+          </span>
           {hasFetched && users.length > 0 && (
-            <Badge className="bg-yellow-500/20 text-yellow-400 border-yellow-500/30 ml-2">
+            <Badge className="border-[#ff2e88]/40 bg-[#ff2e88]/15 text-[#ff2e88]">
               {users.length}
             </Badge>
           )}
-        </CardTitle>
-        <div className="flex items-center gap-2">
-          {isOpen && (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={(e) => {
-                e.stopPropagation();
-                fetchSuspiciousUsers();
-              }}
-              className="bg-zinc-700 border-zinc-600 text-white hover:bg-zinc-600"
-            >
-              <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-            </Button>
-          )}
-          {isOpen ? (
-            <ChevronUp className="w-5 h-5 text-zinc-400" />
-          ) : (
-            <ChevronDown className="w-5 h-5 text-zinc-400" />
-          )}
+          <span className="ml-auto">
+            {isOpen ? (
+              <ChevronUp className="h-5 w-5 text-zinc-400" />
+            ) : (
+              <ChevronDown className="h-5 w-5 text-zinc-400" />
+            )}
+          </span>
+        </button>
+
+        {isOpen && (
+          <button
+            type="button"
+            onClick={fetchSuspiciousUsers}
+            disabled={loading}
+            aria-label="Шинэчлэх"
+            className="cyber-btn p-2"
+          >
+            <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
+          </button>
+        )}
+      </div>
+
+      {!isOpen && (
+        <div className="flex flex-1 flex-col items-center justify-center gap-4 p-6 text-center">
+          <AlertTriangle className="h-10 w-10 text-zinc-700" />
+          <p className="text-sm text-zinc-400">
+            Жагсаалтыг одоогоор ачаалаагүй байна
+          </p>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={handleToggle}
+            className="cyber-btn"
+          >
+            <Eye className="mr-2 h-4 w-4" />
+            Жагсаалт харах
+          </Button>
         </div>
-      </CardHeader>
-      
+      )}
+
       {isOpen && (
-        <CardContent>
+        <div className="flex min-h-0 flex-1 flex-col p-4">
           {/* Бүх device устгах товч */}
           {users.length > 0 && (
-            <div className="mb-4">
-              <Button
-                onClick={handleClearAllDevices}
-                disabled={clearingAll}
-                className="w-full bg-purple-600 hover:bg-purple-700 text-white"
-              >
-                <Trash2 className="w-4 h-4 mr-2" />
-                {clearingAll 
-                  ? "Устгаж байна..." 
-                  : `Бүх хэрэглэгчийн төхөөрөмж устгах (${users.length})`
-                }
-              </Button>
-            </div>
+            <Button
+              onClick={handleClearAllDevices}
+              disabled={clearingAll}
+              className="mb-4 w-full border border-[#8b6cff]/60 bg-[#8b6cff]/15 text-[#c4b5ff] hover:bg-[#8b6cff]/30"
+            >
+              <Trash2 className="mr-2 h-4 w-4" />
+              {clearingAll
+                ? "Устгаж байна..."
+                : `Бүх хэрэглэгчийн төхөөрөмж устгах (${users.length})`}
+            </Button>
           )}
 
-          {loading ? (
+          {loading && users.length === 0 ? (
             <div className="space-y-3">
               {[1, 2, 3].map((i) => (
-                <Skeleton key={i} className="h-16 w-full bg-zinc-700" />
+                <Skeleton key={i} className="h-20 w-full bg-white/5" />
               ))}
             </div>
           ) : users.length === 0 ? (
-            <div className="text-center py-8">
-              <Users className="w-12 h-12 text-zinc-600 mx-auto mb-3" />
-              <p className="text-zinc-400">Сэжигтэй хэрэглэгч олдсонгүй</p>
-              <p className="text-zinc-500 text-sm mt-1">
+            <div className="flex flex-1 flex-col items-center justify-center py-8 text-center">
+              <Users className="mx-auto mb-3 h-12 w-12 text-zinc-700" />
+              <p className="text-zinc-300">Сэжигтэй хэрэглэгч олдсонгүй</p>
+              <p className="mt-1 text-sm text-zinc-500">
                 3+ төхөөрөмжтэй subscribed хэрэглэгч байхгүй байна
               </p>
             </div>
           ) : (
-            <div className="space-y-2 max-h-[500px] overflow-y-auto">
+            <div className="cyber-scroll max-h-[420px] space-y-2 overflow-y-auto pr-1">
               {users.map((user) => {
                 const isBanning = banning === user.id;
                 const isClearing = clearingUser === user.id;
@@ -280,53 +300,56 @@ export default function SuspiciousUsers() {
                 return (
                   <div
                     key={user.id}
-                    className="flex items-center justify-between p-3 bg-zinc-700/30 rounded-lg border border-zinc-700 hover:border-yellow-500/50 transition-colors"
+                    className="border border-white/10 bg-white/[0.02] p-3 transition-colors hover:border-[#ff2e88]/50"
                   >
-                    <div className="flex items-center gap-3">
-                      <p className="text-white">{user.email}</p>
-                      <Badge className="bg-red-500/20 text-red-400 border-red-500/30">
-                        <Monitor className="w-3 h-3 mr-1" />
+                    <div className="flex items-center justify-between gap-3">
+                      <p className="truncate text-sm text-white" title={user.email}>
+                        {user.email}
+                      </p>
+                      <Badge className="shrink-0 border-[#ff2e88]/40 bg-[#ff2e88]/15 text-[#ff2e88]">
+                        <Monitor className="mr-1 h-3 w-3" />
                         {user.deviceCount}
                       </Badge>
                     </div>
 
-                    <div className="flex items-center gap-2">
-                      {/* Device устгах товч */}
+                    <div className="mt-3 flex flex-wrap gap-2">
                       <Button
                         size="sm"
                         variant="outline"
                         onClick={() => handleClearUserDevices(user.id, user.email)}
                         disabled={isClearing}
-                        className="bg-purple-600/20 border-purple-500/50 text-purple-400 hover:bg-purple-600 hover:text-white"
+                        className="border-[#8b6cff]/50 bg-[#8b6cff]/10 text-[#c4b5ff] hover:bg-[#8b6cff]/30 hover:text-white"
                       >
-                        <Trash2 className="w-3 h-3 mr-1" />
+                        <Trash2 className="mr-1 h-3 w-3" />
                         {isClearing ? "..." : "Device"}
                       </Button>
                       <Button
                         size="sm"
                         variant="outline"
                         onClick={() => router.push(`/users/${user.id}`)}
-                        className="bg-zinc-700 border-zinc-600 text-white hover:bg-zinc-600"
+                        className="cyber-btn"
                       >
-                        <Eye className="w-3 h-3 mr-1" />
+                        <Eye className="mr-1 h-3 w-3" />
                         Дэлгэрэнгүй
                       </Button>
                       <Button
                         size="sm"
+                        variant="outline"
                         onClick={() => handleQuickBan(user.id, 7)}
                         disabled={isBanning}
-                        className="bg-orange-600 hover:bg-orange-700 text-white"
+                        className="border-[#ffd23f]/50 bg-[#ffd23f]/10 text-[#ffd23f] hover:bg-[#ffd23f]/25 hover:text-white"
                       >
-                        <Ban className="w-3 h-3 mr-1" />
+                        <Ban className="mr-1 h-3 w-3" />
                         {isBanning ? "..." : "7 хоног"}
                       </Button>
                       <Button
                         size="sm"
+                        variant="outline"
                         onClick={() => handleQuickBan(user.id, 30)}
                         disabled={isBanning}
-                        className="bg-red-600 hover:bg-red-700 text-white"
+                        className="border-[#ff2e88]/60 bg-[#ff2e88]/15 text-[#ff2e88] hover:bg-[#ff2e88]/35 hover:text-white"
                       >
-                        <Ban className="w-3 h-3 mr-1" />
+                        <Ban className="mr-1 h-3 w-3" />
                         {isBanning ? "..." : "30 хоног"}
                       </Button>
                     </div>
@@ -335,8 +358,8 @@ export default function SuspiciousUsers() {
               })}
             </div>
           )}
-        </CardContent>
+        </div>
       )}
-    </Card>
+    </section>
   );
 }

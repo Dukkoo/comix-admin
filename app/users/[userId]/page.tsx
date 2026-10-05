@@ -1,19 +1,28 @@
 // app/users/[userId]/page.tsx
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, type CSSProperties } from "react";
 import { useRouter } from "next/navigation";
-import { useAuth } from '@/app/providers';
-import { ArrowLeft, Crown, Calendar, Mail, User, Zap, Edit, Plus, Minus, Hash, Monitor, Trash2, Ban, RotateCcw, AlertTriangle, MapPin, Globe, Smartphone, Tablet } from "lucide-react";
+import { useAuth } from "@/app/providers";
+import {
+  ArrowLeft,
+  Ban,
+  RotateCcw,
+  AlertTriangle,
+  Trash2,
+  Monitor,
+  Smartphone,
+  Tablet,
+  MapPin,
+  Globe,
+  Plus,
+  Edit,
+  Minus,
+  Save,
+} from "lucide-react";
 import { toast } from "sonner";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { Skeleton } from "@/components/ui/skeleton";
-import { Separator } from "@/components/ui/separator";
-import { updateUser, getUser, removeDevice, banUser, unbanUser } from "./actions";
 import { formatDistanceToNow } from "date-fns";
+import { getUser, removeDevice, banUser, unbanUser } from "./actions";
 
 interface Device {
   deviceId: string;
@@ -37,8 +46,8 @@ interface User {
   xp: number;
   subscriptionStatus: "subscribed" | "not_subscribed";
   subscriptionDaysLeft?: number;
-  subscriptionEndDate?: string;
-  subscriptionStartDate?: string;
+  subscriptionEndDate?: string | null;
+  subscriptionStartDate?: string | null;
   createdAt: string;
   devices: Device[];
   deviceCount: number;
@@ -52,6 +61,72 @@ interface UserEditPageProps {
     userId: string;
   }>;
 }
+
+const USERS_PATH = "/users";
+const COLORS = {
+  cyan: "#00f0ff",
+  magenta: "#ff2e88",
+  violet: "#8b6cff",
+  amber: "#ffd23f",
+  red: "#ff3355",
+  muted: "#71717a",
+};
+
+// Аура icon: цөм ба түүнээс цацрах цагирагууд
+function AuraIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      aria-hidden="true"
+      className={className}
+      style={{ filter: "drop-shadow(0 0 5px rgba(255,51,85,0.75))" }}
+    >
+      <circle cx="12" cy="12" r="2.4" fill="currentColor" stroke="none" />
+      <circle cx="12" cy="12" r="5.6" opacity="0.8" />
+      <circle cx="12" cy="12" r="9.4" opacity="0.45" strokeDasharray="3 3" />
+    </svg>
+  );
+}
+
+const formatDate = (value?: string | null) => {
+  if (!value) return "—";
+  const d = new Date(value);
+  if (isNaN(d.getTime())) return "—";
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}.${p(d.getMonth() + 1)}.${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+};
+
+// Буруу огноо date-fns-д орвол хуудас бүхэлдээ унадаг тул хамгаална
+const timeAgo = (value?: string) => {
+  if (!value) return "—";
+  const d = new Date(value);
+  if (isNaN(d.getTime())) return "—";
+  return formatDistanceToNow(d, { addSuffix: true });
+};
+
+const formatAura = (xp: number) => {
+  if (xp >= 1000000) return `${(xp / 1000000).toFixed(1)}M`;
+  if (xp >= 1000) return `${(xp / 1000).toFixed(1)}K`;
+  return xp.toString();
+};
+
+const getDeviceIcon = (deviceName?: string) => {
+  const name = (deviceName || "").toLowerCase();
+  if (name.includes("android") || name.includes("iphone")) {
+    return <Smartphone className="h-5 w-5 text-[#00f0ff]" />;
+  }
+  if (name.includes("ipad") || name.includes("tablet")) {
+    return <Tablet className="h-5 w-5 text-[#8b6cff]" />;
+  }
+  return <Monitor className="h-5 w-5 text-[#00f0ff]" />;
+};
+
+const INPUT =
+  "w-full border border-white/10 bg-black/30 px-3 py-2 text-sm text-white placeholder:text-zinc-500 focus:border-[#00f0ff]/60 focus:outline-none focus:ring-1 focus:ring-[#00f0ff]/40";
 
 export default function UserEditPage({ params }: UserEditPageProps) {
   const router = useRouter();
@@ -73,37 +148,40 @@ export default function UserEditPage({ params }: UserEditPageProps) {
     resolveParams();
   }, [params]);
 
+  // auth бэлэн болтол хүлээнэ (refresh хийхэд currentUser эхлээд null байдаг)
   useEffect(() => {
-    if (userId) {
+    if (userId && !auth.loading) {
       fetchUser();
     }
-  }, [userId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userId, auth.loading]);
 
-  const fetchUser = async () => {
+  // silent = true бол бүтэн хуудсыг skeleton болгохгүй (хадгалсны дараах шинэчлэлт)
+  const fetchUser = async (silent = false) => {
     try {
-      setLoading(true);
-      const token = await auth?.currentUser?.getIdToken();
-      
+      if (!silent) setLoading(true);
+      const token = await auth.currentUser?.getIdToken();
+
       if (!token) {
-        toast.error("Authentication required");
-        router.push("/admin/users");
+        toast.error("Нэвтрээгүй байна");
+        router.push(USERS_PATH);
         return;
       }
 
       const result = await getUser(userId, token);
-      
+
       if (!result.success || !result.data) {
-        toast.error(result.error || "Failed to fetch user");
-        router.push("/admin/users");
+        toast.error(result.error || "Хэрэглэгч татаж чадсангүй");
+        router.push(USERS_PATH);
         return;
       }
 
       setUser(result.data);
       setXpAmount(result.data.xp.toString());
     } catch (error) {
-      console.error('Error fetching user:', error);
-      toast.error("Failed to fetch user data");
-      router.push("/admin/users");
+      console.error("Error fetching user:", error);
+      toast.error("Хэрэглэгч татаж чадсангүй");
+      router.push(USERS_PATH);
     } finally {
       setLoading(false);
     }
@@ -112,45 +190,66 @@ export default function UserEditPage({ params }: UserEditPageProps) {
   const handleSave = async () => {
     if (!user) return;
 
-    const subDays = subscriptionDays ? parseInt(subscriptionDays) : undefined;
-    const newXp = xpAmount ? parseInt(xpAmount) : undefined;
+    const subDays = subscriptionDays !== "" ? parseInt(subscriptionDays, 10) : undefined;
+    const parsedXp = xpAmount !== "" ? parseInt(xpAmount, 10) : undefined;
 
-    if (subDays === undefined && (newXp === undefined || newXp === user.xp)) {
+    if (subDays !== undefined && isNaN(subDays)) {
+      toast.error("Хоногийн тоо буруу байна");
+      return;
+    }
+
+    const xpChanged = parsedXp !== undefined && !isNaN(parsedXp) && parsedXp !== user.xp;
+
+    if (subDays === undefined && !xpChanged) {
       toast.error("Хадгалахаасаа өмнө өөрчлөлт хийнэ үү");
       return;
     }
 
     setSaving(true);
     try {
-      const token = await auth?.currentUser?.getIdToken();
-      
+      const token = await auth.currentUser?.getIdToken();
+
       if (!token) {
-        toast.error("Authentication required");
+        toast.error("Нэвтрээгүй байна");
         return;
       }
 
-      const result = await updateUser({
-        userId: user.id,
-        subscriptionDays: subDays,
-        xp: newXp !== user.xp ? newXp : undefined,
-        mode,
-        authToken: token,
+      // Server action биш, шалгалт, transaction, аудитын бүртгэлтэй PATCH API ашиглана
+      const response = await fetch("/api/admin/users", {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          userId: user.id,
+          subscriptionDays: subDays,
+          xp: xpChanged ? parsedXp : undefined,
+          mode,
+        }),
       });
 
-      if (!result.success) {
-        toast.error(result.error || "Failed to update user");
+      const result = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        toast.error(result.error || "Хадгалж чадсангүй");
         return;
       }
 
-      toast.success("User updated successfully", {
-        description: result.message,
-      });
+      const parts: string[] = [];
+      if (subDays !== undefined) {
+        if (subDays === 0) parts.push("Эрх цуцлагдлаа");
+        else if (mode === "set") parts.push(`Эрх ${subDays} хоногоор тохируулагдлаа`);
+        else parts.push(`${subDays} хоног нэмэгдлээ`);
+      }
+      if (xpChanged) parts.push(`Аура ${parsedXp} боллоо`);
+      toast.success(parts.join(", ") || "Хадгалагдлаа");
 
-      await fetchUser();
       setSubscriptionDays("");
+      await fetchUser(true);
     } catch (error) {
       console.error("Error updating user:", error);
-      toast.error("Failed to update user");
+      toast.error("Хадгалж чадсангүй");
     } finally {
       setSaving(false);
     }
@@ -162,10 +261,10 @@ export default function UserEditPage({ params }: UserEditPageProps) {
 
     setBanning(true);
     try {
-      const token = await auth?.currentUser?.getIdToken();
-      
+      const token = await auth.currentUser?.getIdToken();
+
       if (!token) {
-        toast.error("Authentication required");
+        toast.error("Нэвтрээгүй байна");
         return;
       }
 
@@ -177,15 +276,15 @@ export default function UserEditPage({ params }: UserEditPageProps) {
       );
 
       if (!result.success) {
-        toast.error(result.error || "Failed to ban user");
+        toast.error(result.error || "Бан өгч чадсангүй");
         return;
       }
 
       toast.success(`${days} хоногийн бан амжилттай өгөгдлөө`);
-      await fetchUser();
+      await fetchUser(true);
     } catch (error) {
       console.error("Error banning user:", error);
-      toast.error("Failed to ban user");
+      toast.error("Бан өгч чадсангүй");
     } finally {
       setBanning(false);
     }
@@ -197,126 +296,70 @@ export default function UserEditPage({ params }: UserEditPageProps) {
 
     setBanning(true);
     try {
-      const token = await auth?.currentUser?.getIdToken();
-      
+      const token = await auth.currentUser?.getIdToken();
+
       if (!token) {
-        toast.error("Authentication required");
+        toast.error("Нэвтрээгүй байна");
         return;
       }
 
       const result = await unbanUser(user.id, token);
 
       if (!result.success) {
-        toast.error(result.error || "Failed to unban user");
+        toast.error(result.error || "Бан цуцалж чадсангүй");
         return;
       }
 
       toast.success("Бан амжилттай цуцлагдлаа");
-      await fetchUser();
+      await fetchUser(true);
     } catch (error) {
       console.error("Error unbanning user:", error);
-      toast.error("Failed to unban user");
+      toast.error("Бан цуцалж чадсангүй");
     } finally {
       setBanning(false);
     }
   };
 
   const handleRemoveDevice = async (deviceId: string) => {
+    if (!user) return;
     if (!confirm("Төхөөрөмжийг устгахыг хүсэж байна уу?")) return;
 
     try {
-      const token = await auth?.currentUser?.getIdToken();
-      
+      const token = await auth.currentUser?.getIdToken();
+
       if (!token) {
-        toast.error("Authentication required");
+        toast.error("Нэвтрээгүй байна");
         return;
       }
 
-      const result = await removeDevice(user!.id, deviceId, token);
+      const result = await removeDevice(user.id, deviceId, token);
 
       if (!result.success) {
-        toast.error(result.error || "Failed to remove device");
+        toast.error(result.error || "Төхөөрөмж устгаж чадсангүй");
         return;
       }
 
       toast.success("Төхөөрөмж устгагдлаа");
-      await fetchUser();
+      await fetchUser(true);
     } catch (error) {
       console.error("Error removing device:", error);
-      toast.error("Failed to remove device");
+      toast.error("Төхөөрөмж устгаж чадсангүй");
     }
-  };
-
-  const getDeviceIcon = (deviceName?: string) => {
-    // Handle undefined or null deviceName
-    if (!deviceName) {
-      return <Monitor className="w-5 h-5 text-gray-400" />;
-    }
-    
-    const name = deviceName.toLowerCase();
-    
-    if (name.includes("android") || name.includes("iphone")) {
-      return <Smartphone className="w-5 h-5 text-cyan-400" />;
-    }
-    if (name.includes("ipad") || name.includes("tablet")) {
-      return <Tablet className="w-5 h-5 text-purple-400" />;
-    }
-    return <Monitor className="w-5 h-5 text-blue-400" />;
-  };
-
-  const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleString("en-US", {
-      year: "numeric",
-      month: "long",
-      day: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-    });
-  };
-
-  const formatXP = (xp: number) => {
-    if (xp >= 1000000) {
-      return `${(xp / 1000000).toFixed(1)}M`;
-    } else if (xp >= 1000) {
-      return `${(xp / 1000).toFixed(1)}K`;
-    }
-    return xp.toString();
-  };
-
-  const getSubscriptionBadge = () => {
-    if (!user) return null;
-    
-    if (user.subscriptionStatus === "subscribed") {
-      return (
-        <Badge className="bg-emerald-500/20 text-emerald-400 border-emerald-500/30 cursor-pointer">
-          Идэвхжүүлсэн
-        </Badge>
-      );
-    }
-    
-    return (
-      <Badge className="bg-zinc-500/20 text-zinc-400 border-zinc-500/30">
-        Идэвхжүүлээгүй
-      </Badge>
-    );
   };
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-zinc-900 p-6">
-        <div className="max-w-6xl mx-auto space-y-6">
-          <Skeleton className="h-10 w-32 bg-zinc-800" />
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            <Card className="lg:col-span-2 bg-zinc-800/50 border-zinc-700/50">
-              <CardContent className="p-6">
-                <Skeleton className="h-32 w-full bg-zinc-700" />
-              </CardContent>
-            </Card>
-            <Card className="bg-zinc-800/50 border-zinc-700/50">
-              <CardContent className="p-6">
-                <Skeleton className="h-64 w-full bg-zinc-700" />
-              </CardContent>
-            </Card>
+      <div className="cyber-bg min-h-screen w-full p-4 sm:p-6">
+        <div className="relative z-10 mx-auto max-w-6xl space-y-6">
+          <div className="h-10 w-40 animate-pulse bg-white/5" />
+          <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+            {[1, 2, 3, 4].map((i) => (
+              <div key={i} className="h-24 animate-pulse bg-white/5" />
+            ))}
+          </div>
+          <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+            <div className="h-72 animate-pulse bg-white/5 lg:col-span-2" />
+            <div className="h-72 animate-pulse bg-white/5" />
           </div>
         </div>
       </div>
@@ -325,334 +368,348 @@ export default function UserEditPage({ params }: UserEditPageProps) {
 
   if (!user) {
     return (
-      <div className="min-h-screen bg-zinc-900 p-6 flex items-center justify-center">
-        <Card className="bg-zinc-800/50 border-zinc-700/50">
-          <CardContent className="p-8 text-center">
-            <p className="text-white mb-4">User not found</p>
-            <Button onClick={() => router.push("/admin/users")}>
-              Буцах
-            </Button>
-          </CardContent>
-        </Card>
+      <div className="cyber-bg flex min-h-screen w-full items-center justify-center p-6">
+        <div className="cyber-panel relative z-10 p-8 text-center">
+          <p className="mb-4 text-white">Хэрэглэгч олдсонгүй</p>
+          <button type="button" onClick={() => router.push(USERS_PATH)} className="cyber-btn px-5 py-2 text-sm">
+            Буцах
+          </button>
+        </div>
       </div>
     );
   }
 
   const isSuspicious = user.deviceCount >= 3;
+  const isSubscribed = user.subscriptionStatus === "subscribed";
+
+  const stats: Array<{ label: string; color: string; content: React.ReactNode; sub?: string }> = [
+    {
+      label: "Төлөв",
+      color: isSubscribed ? COLORS.cyan : COLORS.muted,
+      content: (
+        <span className={`font-display text-lg font-bold ${isSubscribed ? "text-[#00f0ff]" : "text-zinc-400"}`}>
+          {isSubscribed ? "Идэвхжүүлсэн" : "Идэвхжүүлээгүй"}
+        </span>
+      ),
+      sub:
+        isSubscribed && user.subscriptionDaysLeft !== undefined
+          ? `${user.subscriptionDaysLeft} өдөр үлдсэн, ${formatDate(user.subscriptionEndDate)}`
+          : undefined,
+    },
+    {
+      label: "Аура",
+      color: COLORS.red,
+      content: (
+        <div className="flex items-center gap-2 text-[#ff3355]">
+          <AuraIcon className="h-5 w-5" />
+          <span
+            className="font-display text-2xl font-bold tabular-nums"
+            style={{ textShadow: "0 0 12px rgba(255,51,85,0.45)" }}
+          >
+            {formatAura(user.xp)}
+          </span>
+        </div>
+      ),
+    },
+    {
+      label: "ID",
+      color: COLORS.violet,
+      content: (
+        <span className="cyber-glow font-display text-2xl font-bold tabular-nums">
+          #{user.userId || "N/A"}
+        </span>
+      ),
+    },
+    {
+      label: "Төхөөрөмж",
+      color: isSuspicious ? COLORS.amber : COLORS.cyan,
+      content: (
+        <span className="cyber-glow font-display text-2xl font-bold tabular-nums">
+          {user.deviceCount} <span className="text-zinc-500">/ 2</span>
+        </span>
+      ),
+    },
+  ];
 
   return (
-    <div className="min-h-screen bg-zinc-900 p-6">
-      <div className="max-w-6xl mx-auto space-y-6">
+    <div className="cyber-bg min-h-screen w-full p-4 sm:p-6">
+      <div className="relative z-10 mx-auto max-w-6xl space-y-6">
         {/* Header */}
         <div className="flex items-center gap-4">
-          <Button
-            variant="outline"
-            size="icon"
-            onClick={() => router.push("/admin/users")}
-            className="bg-zinc-800 border-zinc-700 text-white hover:bg-zinc-700"
+          <button
+            type="button"
+            onClick={() => router.push(USERS_PATH)}
+            aria-label="Буцах"
+            className="cyber-btn p-2.5"
           >
-            <ArrowLeft className="w-4 h-4" />
-          </Button>
-          <div>
-            <h1 className="text-2xl font-bold text-white flex items-center gap-2">
-              {user.username}
+            <ArrowLeft className="h-4 w-4" />
+          </button>
+          <div className="min-w-0">
+            <h1 className="font-display flex flex-wrap items-center gap-2 text-2xl font-bold text-white">
+              <span className="truncate">{user.username}</span>
               {user.banned && (
-                <Badge className="bg-red-500/20 text-red-400 border-red-500/30">
-                  <Ban className="w-3 h-3 mr-1" /> BANNED
-                </Badge>
+                <span className="inline-flex items-center border border-[#ff2e88]/50 bg-[#ff2e88]/15 px-2 py-0.5 text-xs font-medium text-[#ff2e88]">
+                  <Ban className="mr-1 h-3 w-3" /> Бандуулсан
+                </span>
               )}
               {isSuspicious && !user.banned && (
-                <Badge className="bg-yellow-500/20 text-yellow-400 border-yellow-500/30">
-                  <AlertTriangle className="w-3 h-3 mr-1" /> SUSPICIOUS
-                </Badge>
+                <span className="inline-flex items-center border border-[#ffd23f]/50 bg-[#ffd23f]/15 px-2 py-0.5 text-xs font-medium text-[#ffd23f]">
+                  <AlertTriangle className="mr-1 h-3 w-3" /> Сэжигтэй
+                </span>
               )}
             </h1>
-            <p className="text-sm text-zinc-400">{user.email}</p>
+            <p className="truncate text-sm text-zinc-400">{user.email}</p>
           </div>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Left Column */}
-          <div className="lg:col-span-2 space-y-6">
-            {/* User Info Card */}
-            <Card className="bg-zinc-800/50 border-zinc-700/50">
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2 text-white">
-                  <User className="w-5 h-5 text-cyan-400" />
-                  Хэрэглэгчийн мэдээлэл
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <p className="text-xs text-zinc-500 uppercase">Төлөв</p>
-                    {getSubscriptionBadge()}
-                  </div>
-                  <div>
-                    <p className="text-xs text-zinc-500 uppercase">Оноо</p>
-                    <div className="flex items-center gap-1 text-yellow-400">
-                      <Zap className="w-4 h-4" />
-                      <span className="font-medium">{formatXP(user.xp)}</span>
-                    </div>
-                  </div>
-                  <div>
-                    <p className="text-xs text-zinc-500 uppercase">ID</p>
-                    <p className="text-cyan-400 font-mono">#{user.userId || "N/A"}</p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-zinc-500 uppercase">Төхөөрөмж</p>
-                    <p className="font-bold text-white">{user.deviceCount} / 2</p>
-                  </div>
-                </div>
-
-                {user.banned && (
-                  <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-4">
-                    <p className="text-red-400 font-medium">
-                      Бан дуусах: {user.banExpiry ? formatDate(user.banExpiry) : "N/A"}
-                    </p>
-                    <p className="text-sm text-zinc-400 mt-1">Шалтгаан: {user.banReason}</p>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-
-            {/* Devices Card */}
-            <Card className="bg-zinc-800/50 border-zinc-700/50">
-              <CardHeader>
-                <CardTitle className="flex items-center justify-between text-white">
-                  <span className="flex items-center gap-2">
-                    <Monitor className="w-5 h-5 text-cyan-400" />
-                    Бүртгэлтэй төхөөрөмжүүд ({user.deviceCount})
-                  </span>
-                  {isSuspicious && (
-                    <Badge className="bg-yellow-500/20 text-yellow-400 border-yellow-500/30">
-                      ⚠️ 2+ төхөөрөмж
-                    </Badge>
-                  )}
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                {user.devices.length === 0 ? (
-                  <p className="text-zinc-400 text-sm">Төхөөрөмж бүртгэгдээгүй байна</p>
-                ) : (
-                  <div className="space-y-4">
-                    {user.devices.map((device, index) => (
-                      <div
-                        key={`${device.deviceId}-${index}`}
-                        className="p-4 bg-zinc-700/30 rounded-lg border border-zinc-700"
-                      >
-                        <div className="flex items-start justify-between">
-                          <div className="flex items-start gap-3">
-                            <div className="mt-1">{getDeviceIcon(device.deviceName)}</div>
-                            <div>
-                              <h4 className="text-white font-medium">
-                                {device.deviceName || "Unknown Device"}
-                              </h4>
-                              <p className="text-sm text-zinc-400">
-                                {device.browser || "Unknown"} · {device.os || "Unknown"}
-                              </p>
-                              {device.ipAddress && (
-                                <div className="flex items-center gap-4 mt-2 text-xs text-zinc-500">
-                                  <span className="flex items-center gap-1">
-                                    <MapPin className="w-3 h-3" />
-                                    {device.ipAddress}
-                                  </span>
-                                  {device.timezone && (
-                                    <span className="flex items-center gap-1">
-                                      <Globe className="w-3 h-3" />
-                                      {device.timezone}
-                                    </span>
-                                  )}
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                          {index === 0 && (
-                            <Badge className="bg-green-500/20 text-green-400 border-green-500/30">
-                              Үндсэн
-                            </Badge>
-                          )}
-                        </div>
-                        <Separator className="my-3 bg-zinc-700" />
-                        <div className="flex items-center justify-between text-xs text-zinc-400">
-                          <div className="flex items-center gap-4">
-                            {device.firstSeen && (
-                              <span>Анх: {new Date(device.firstSeen).toLocaleDateString()}</span>
-                            )}
-                            <span>
-                              Сүүлд: {device.lastUsed || device.lastActive 
-                                ? formatDistanceToNow(new Date(device.lastUsed || device.lastActive!), { addSuffix: true })
-                                : "N/A"
-                              }
-                            </span>
-                          </div>
-                          <Button
-                            onClick={() => handleRemoveDevice(device.deviceId)}
-                            variant="ghost"
-                            size="sm"
-                            className="text-red-400 hover:text-red-300 hover:bg-red-500/20"
-                          >
-                            <Trash2 className="w-3 h-3" />
-                          </Button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </CardContent>
-            </Card>
+        {/* Бан мэдэгдэл */}
+        {user.banned && (
+          <div className="cyber-panel cyber-panel-warn p-4">
+            <p className="font-medium text-[#ff2e88]">Бан дуусах: {formatDate(user.banExpiry)}</p>
+            {user.banReason && <p className="mt-1 text-sm text-zinc-400">{user.banReason}</p>}
           </div>
+        )}
 
-          {/* Right Column - Management */}
-          <div className="space-y-6">
-            {/* Subscription & XP Management */}
-            <Card className="bg-zinc-800/50 border-zinc-700/50">
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2 text-white">
-                  <Edit className="w-5 h-5 text-cyan-400" />
-                  Хэрэглэгчийг тохируулах
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-6">
-                {/* Subscription */}
-                <div className="space-y-4">
-                  <div>
-                    <label className="text-sm font-medium text-zinc-300 mb-2 block">
-                      Эрхийн хугацаа
-                    </label>
-                    <div className="flex gap-2 mb-2">
-                      <Button
-                        type="button"
-                        variant={mode === "add" ? "default" : "outline"}
-                        size="sm"
-                        onClick={() => setMode("add")}
-                        className={mode === "add"
-                          ? "bg-cyan-600 hover:bg-cyan-700" 
-                          : "bg-zinc-700 border-zinc-600 text-white hover:bg-zinc-600"
-                        }
-                      >
-                        <Plus className="w-3 h-3 mr-1" />
-                        Нэмэх
-                      </Button>
-                      <Button
-                        type="button"
-                        variant={mode === "set" ? "default" : "outline"}
-                        size="sm"
-                        onClick={() => setMode("set")}
-                        className={mode === "set" 
-                          ? "bg-cyan-600 hover:bg-cyan-700" 
-                          : "bg-zinc-700 border-zinc-600 text-white hover:bg-zinc-600"
-                        }
-                      >
-                        <Edit className="w-3 h-3 mr-1" />
-                        Тохируулах
-                      </Button>
+        {/* Статистик */}
+        <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+          {stats.map((stat) => (
+            <div
+              key={stat.label}
+              className="cyber-panel cyber-stat p-4"
+              style={{ "--accent": stat.color } as CSSProperties}
+            >
+              <p className="mb-1 text-xs text-zinc-400">{stat.label}</p>
+              {stat.content}
+              {stat.sub && <p className="mt-1 text-xs text-zinc-500">{stat.sub}</p>}
+            </div>
+          ))}
+        </div>
+
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+          {/* Төхөөрөмжүүд */}
+          <section className="cyber-panel lg:col-span-2">
+            <div className="flex items-center justify-between gap-3 border-b border-white/5 p-4">
+              <h2 className="font-display flex items-center gap-2 text-lg font-semibold text-white">
+                <Monitor className="h-5 w-5 text-[#00f0ff]" />
+                Төхөөрөмжүүд
+                <span className="cyber-glow tabular-nums">{user.deviceCount}</span>
+              </h2>
+              {isSuspicious && (
+                <span className="border border-[#ffd23f]/50 bg-[#ffd23f]/15 px-2 py-0.5 text-xs font-medium text-[#ffd23f]">
+                  3+ төхөөрөмж
+                </span>
+              )}
+            </div>
+
+            <div className="p-4">
+              {user.devices.length === 0 ? (
+                <p className="py-8 text-center text-sm text-zinc-400">Төхөөрөмж бүртгэгдээгүй байна</p>
+              ) : (
+                <div className="space-y-3">
+                  {user.devices.map((device, index) => (
+                    <div
+                      key={`${device.deviceId}-${index}`}
+                      className="border border-white/10 bg-white/[0.02] p-4 transition-colors hover:border-[#00f0ff]/40"
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="flex min-w-0 items-start gap-3">
+                          <div className="mt-0.5">{getDeviceIcon(device.deviceName)}</div>
+                          <div className="min-w-0">
+                            <h3 className="truncate font-medium text-white">
+                              {device.deviceName || "Unknown Device"}
+                            </h3>
+                            <p className="text-sm text-zinc-400">
+                              {device.browser || "Unknown"} · {device.os || "Unknown"}
+                            </p>
+                            {device.ipAddress && (
+                              <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-zinc-500">
+                                <span className="flex items-center gap-1">
+                                  <MapPin className="h-3 w-3" />
+                                  {device.ipAddress}
+                                </span>
+                                {device.timezone && (
+                                  <span className="flex items-center gap-1">
+                                    <Globe className="h-3 w-3" />
+                                    {device.timezone}
+                                  </span>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                        {index === 0 && (
+                          <span className="shrink-0 border border-[#00f0ff]/40 bg-[#00f0ff]/10 px-2 py-0.5 text-xs font-medium text-[#00f0ff]">
+                            Үндсэн
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="mt-3 flex items-center justify-between gap-3 border-t border-white/5 pt-3 text-xs text-zinc-400">
+                        <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+                          {device.firstSeen && (
+                            <span>Анх: {formatDate(device.firstSeen).slice(0, 10)}</span>
+                          )}
+                          <span>Сүүлд: {timeAgo(device.lastUsed || device.lastActive)}</span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveDevice(device.deviceId)}
+                          aria-label="Төхөөрөмж устгах"
+                          title="Устгах"
+                          className="flex h-8 w-8 shrink-0 items-center justify-center border border-[#ff2e88]/40 bg-[#ff2e88]/10 text-[#ff2e88] transition-colors hover:bg-[#ff2e88]/30 hover:text-white"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
                     </div>
-                    <Input
-                      type="number"
-                      min="0"
-                      max="365"
-                      value={subscriptionDays}
-                      onChange={(e) => setSubscriptionDays(e.target.value)}
-                      placeholder="Хоногийн тоо"
-                      className="bg-zinc-700/50 border-zinc-600 text-white"
-                    />
+                  ))}
+                </div>
+              )}
+            </div>
+          </section>
+
+          {/* Удирдлага */}
+          <div className="space-y-6">
+            <section className="cyber-panel">
+              <div className="border-b border-white/5 p-4">
+                <h2 className="font-display flex items-center gap-2 text-lg font-semibold text-white">
+                  <Edit className="h-5 w-5 text-[#00f0ff]" />
+                  Тохируулах
+                </h2>
+              </div>
+
+              <div className="space-y-5 p-4">
+                {/* Эрх */}
+                <div className="space-y-3">
+                  <label htmlFor="days" className="block text-sm font-medium text-zinc-300">
+                    Эрхийн хугацаа
+                  </label>
+
+                  <div role="group" aria-label="Горим" className="flex gap-1 border border-white/10 bg-black/30 p-1">
+                    {(
+                      [
+                        { key: "add", label: "Нэмэх", icon: Plus },
+                        { key: "set", label: "Тохируулах", icon: Edit },
+                      ] as const
+                    ).map((option) => {
+                      const Icon = option.icon;
+                      const isOn = mode === option.key;
+                      return (
+                        <button
+                          key={option.key}
+                          type="button"
+                          aria-pressed={isOn}
+                          onClick={() => setMode(option.key)}
+                          className={`flex flex-1 items-center justify-center gap-1.5 px-3 py-1.5 text-sm font-medium transition-colors ${
+                            isOn
+                              ? "bg-[#00f0ff]/20 text-[#00f0ff] shadow-[0_0_12px_rgba(0,240,255,0.25)]"
+                              : "text-zinc-400 hover:bg-white/5 hover:text-white"
+                          }`}
+                        >
+                          <Icon className="h-3.5 w-3.5" />
+                          {option.label}
+                        </button>
+                      );
+                    })}
                   </div>
+
+                  <input
+                    id="days"
+                    type="number"
+                    min="0"
+                    max="365"
+                    value={subscriptionDays}
+                    onChange={(e) => setSubscriptionDays(e.target.value)}
+                    placeholder="Хоногийн тоо"
+                    className={INPUT}
+                  />
 
                   <div className="grid grid-cols-3 gap-2">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={() => setSubscriptionDays("7")}
-                      className="bg-zinc-700/50 border-zinc-600 text-white"
-                    >
+                    <button type="button" onClick={() => setSubscriptionDays("7")} className="cyber-btn py-1.5 text-sm">
                       7 өдөр
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={() => setSubscriptionDays("30")}
-                      className="bg-zinc-700/50 border-zinc-600 text-white"
-                    >
+                    </button>
+                    <button type="button" onClick={() => setSubscriptionDays("30")} className="cyber-btn py-1.5 text-sm">
                       30 өдөр
-                    </Button>
-                    <Button
+                    </button>
+                    <button
                       type="button"
-                      variant="outline"
-                      size="sm"
                       onClick={() => setSubscriptionDays("0")}
-                      className="bg-red-700/50 border-red-600 text-red-300"
+                      className="flex items-center justify-center gap-1 border border-[#ff2e88]/50 bg-[#ff2e88]/10 py-1.5 text-sm text-[#ff2e88] transition-colors hover:bg-[#ff2e88]/25"
                     >
-                      <Minus className="w-3 h-3 mr-1" />
+                      <Minus className="h-3 w-3" />
                       Дуусгах
-                    </Button>
+                    </button>
                   </div>
                 </div>
 
-                {/* XP */}
+                {/* Аура */}
                 <div>
-                  <label className="text-sm font-medium text-zinc-300 block mb-2">
-                    Онооны хэмжээ
+                  <label htmlFor="aura" className="mb-2 flex items-center gap-2 text-sm font-medium text-zinc-300">
+                    <AuraIcon className="h-4 w-4 text-[#ff3355]" />
+                    Аура
                   </label>
-                  <Input
+                  <input
+                    id="aura"
                     type="number"
                     min="0"
                     value={xpAmount}
                     onChange={(e) => setXpAmount(e.target.value)}
-                    className="bg-zinc-700/50 border-zinc-600 text-white"
+                    className={INPUT}
                   />
                 </div>
 
-                <Button
+                <button
+                  type="button"
                   onClick={handleSave}
                   disabled={saving}
-                  className="w-full bg-cyan-600 hover:bg-cyan-700"
+                  className="cyber-btn flex w-full items-center justify-center gap-2 px-4 py-2.5 text-sm font-medium"
+                  style={{ borderColor: "rgba(0,240,255,0.6)", backgroundColor: "rgba(0,240,255,0.15)" }}
                 >
+                  <Save className="h-4 w-4" />
                   {saving ? "Хадгалж байна..." : "Хадгалах"}
-                </Button>
-              </CardContent>
-            </Card>
+                </button>
+              </div>
+            </section>
 
-            {/* Ban Controls */}
-            {user.subscriptionStatus === "subscribed" && (
-              <Card className="bg-zinc-800/50 border-zinc-700/50">
-                <CardHeader>
-                  <CardTitle className="text-white">Ban удирдлага</CardTitle>
-                </CardHeader>
-                <CardContent>
+            {/* Бан: идэвхтэй эрхтэй ЭСВЭЛ бандуулсан хэрэглэгчид (хугацаа нь дууссан ч бан цуцлах боломжтой) */}
+            {(isSubscribed || user.banned) && (
+              <section className="cyber-panel cyber-panel-warn">
+                <div className="border-b border-white/5 p-4">
+                  <h2 className="font-display text-lg font-semibold text-white">Бан</h2>
+                </div>
+                <div className="p-4">
                   {user.banned ? (
-                    <Button
+                    <button
+                      type="button"
                       onClick={handleUnban}
                       disabled={banning}
-                      className="w-full bg-green-600 hover:bg-green-700"
+                      className="cyber-btn flex w-full items-center justify-center gap-2 px-4 py-2.5 text-sm font-medium"
                     >
-                      <RotateCcw className="w-4 h-4 mr-2" />
+                      <RotateCcw className="h-4 w-4" />
                       Бан цуцлах
-                    </Button>
+                    </button>
                   ) : (
-                    <div className="space-y-2">
-                      <Button
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
                         onClick={() => handleBan(7)}
                         disabled={banning}
-                        className="w-full bg-orange-600 hover:bg-orange-700"
+                        className="flex items-center justify-center gap-2 border border-[#ffd23f]/50 bg-[#ffd23f]/10 py-2.5 text-sm font-medium text-[#ffd23f] transition-colors hover:bg-[#ffd23f]/25 disabled:cursor-not-allowed disabled:opacity-50"
                       >
-                        <Ban className="w-4 h-4 mr-2" />
-                        7 хоног бан
-                      </Button>
-                      <Button
+                        <Ban className="h-4 w-4" />7 хоног
+                      </button>
+                      <button
+                        type="button"
                         onClick={() => handleBan(30)}
                         disabled={banning}
-                        className="w-full bg-red-600 hover:bg-red-700"
+                        className="flex items-center justify-center gap-2 border border-[#ff2e88]/60 bg-[#ff2e88]/15 py-2.5 text-sm font-medium text-[#ff2e88] transition-colors hover:bg-[#ff2e88]/35 hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
                       >
-                        <Ban className="w-4 h-4 mr-2" />
-                        30 хоног бан
-                      </Button>
+                        <Ban className="h-4 w-4" />30 хоног
+                      </button>
                     </div>
                   )}
-                </CardContent>
-              </Card>
+                </div>
+              </section>
             )}
           </div>
         </div>

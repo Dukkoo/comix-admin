@@ -2,7 +2,24 @@
 "use server";
 
 import { auth, firestore } from "@/firebase/server";
-import { revalidatePath } from "next/cache";
+
+// "use server" файлаас зөвхөн async функц export хийж болно.
+// Доорх тогтмол, туслах функцүүд нь export хийгдээгүй тул асуудалгүй.
+const MAX_SUBSCRIPTION_DAYS = 3650; // 10 жил
+const MAX_XP = 1_000_000_000;
+
+/** Token хүчинтэй бөгөөд `admin` claim-тэй эсэхийг шалгана. Буруу token бол false. */
+const isAdmin = async (authToken: string): Promise<boolean> => {
+  try {
+    const verifiedToken = await auth.verifyIdToken(authToken);
+    return Boolean(verifiedToken.admin);
+  } catch {
+    return false;
+  }
+};
+
+/** Firestore update() нь document байхгүй үед NOT_FOUND (code 5) алдаа шиддэг. */
+const isNotFound = (error: any) => error?.code === 5 || error?.code === "not-found";
 
 export const updateUserSubscription = async (
   userId: string,
@@ -10,31 +27,37 @@ export const updateUserSubscription = async (
   authToken: string
 ) => {
   try {
-    const verifiedToken = await auth.verifyIdToken(authToken);
-
-    if (!verifiedToken.admin) {
+    if (!(await isAdmin(authToken))) {
       return { error: true, message: "Unauthorized access" };
     }
 
-    const userRef = firestore.collection("users").doc(userId);
-    const userDoc = await userRef.get(); // 1 read
-
-    if (!userDoc.exists) {
-      return { error: true, message: "User not found" };
+    if (!userId || typeof userId !== "string") {
+      return { error: true, message: "Invalid user" };
     }
 
-    let updateData: any = {};
+    // NaN, сөрөг, бутархай, хэт том утгыг хаана.
+    // (Өмнө нь NaN орвол эрх чимээгүй цуцлагддаг байсан.)
+    if (
+      !Number.isInteger(subscriptionDays) ||
+      subscriptionDays < 0 ||
+      subscriptionDays > MAX_SUBSCRIPTION_DAYS
+    ) {
+      return { error: true, message: "Invalid subscription days" };
+    }
+
+    let updateData: Record<string, unknown>;
 
     if (subscriptionDays > 0) {
       const endDate = new Date();
       endDate.setDate(endDate.getDate() + subscriptionDays);
-      
+
       updateData = {
         subscriptionStatus: "subscribed",
         subscriptionEndDate: endDate.toISOString(),
         updatedAt: new Date(),
       };
     } else {
+      // 0 = эрхийг цуцлах
       updateData = {
         subscriptionStatus: "not_subscribed",
         subscriptionEndDate: null,
@@ -42,12 +65,14 @@ export const updateUserSubscription = async (
       };
     }
 
-    await userRef.update(updateData); // 1 write
-
-    revalidatePath("/admin/users");
+    // Өмнөх get() хэрэггүй: document байхгүй бол update() өөрөө NOT_FOUND шиднэ (1 read хэмнэнэ)
+    await firestore.collection("users").doc(userId).update(updateData);
 
     return { error: false, message: "User subscription updated successfully" };
   } catch (error: any) {
+    if (isNotFound(error)) {
+      return { error: true, message: "User not found" };
+    }
     console.error("Error updating user subscription:", error);
     return { error: true, message: "Failed to update user subscription" };
   }
@@ -59,48 +84,51 @@ export const updateUserXP = async (
   authToken: string
 ) => {
   try {
-    const verifiedToken = await auth.verifyIdToken(authToken);
-
-    if (!verifiedToken.admin) {
+    if (!(await isAdmin(authToken))) {
       return { error: true, message: "Unauthorized access" };
     }
 
-    const userRef = firestore.collection("users").doc(userId);
-    const userDoc = await userRef.get(); // 1 read
-
-    if (!userDoc.exists) {
-      return { error: true, message: "User not found" };
+    if (!userId || typeof userId !== "string") {
+      return { error: true, message: "Invalid user" };
     }
 
-    await userRef.update({
-      xp: Math.max(0, xpAmount),
-      updatedAt: new Date(),
-    }); // 1 write
+    // Math.max(0, NaN) нь NaN буцаадаг тул заавал эхлээд шалгана
+    if (!Number.isFinite(xpAmount) || xpAmount > MAX_XP) {
+      return { error: true, message: "Invalid XP amount" };
+    }
 
-    revalidatePath("/admin/users");
+    await firestore
+      .collection("users")
+      .doc(userId)
+      .update({
+        xp: Math.max(0, Math.round(xpAmount)),
+        updatedAt: new Date(),
+      });
 
     return { error: false, message: "User XP updated successfully" };
   } catch (error: any) {
+    if (isNotFound(error)) {
+      return { error: true, message: "User not found" };
+    }
     console.error("Error updating user XP:", error);
     return { error: true, message: "Failed to update user XP" };
   }
 };
 
 // ========================================
-// OPTIMIZED: count() query ашиглах (3 reads only!)
+// count() aggregation: бүх document татахаас хамаагүй хямд.
+// Зардал: таарсан индексийн 1000 бичлэг тутамд 1 read (хамгийн багадаа 1).
 // ========================================
 export const getUserStats = async (authToken: string) => {
   try {
-    const verifiedToken = await auth.verifyIdToken(authToken);
-
-    if (!verifiedToken.admin) {
+    if (!(await isAdmin(authToken))) {
       return { error: true, message: "Unauthorized access" };
     }
 
-    // Count queries - 1 read тус бүр
     const [totalSnapshot, subscribedSnapshot] = await Promise.all([
       firestore.collection("users").count().get(),
-      firestore.collection("users")
+      firestore
+        .collection("users")
         .where("subscriptionStatus", "==", "subscribed")
         .count()
         .get(),

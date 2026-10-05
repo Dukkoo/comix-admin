@@ -1,162 +1,129 @@
 // app/api/admin/analytics/route.ts
-import { auth, firestore } from "@/firebase/server";
+import { firestore } from "@/firebase/server";
 import { NextRequest, NextResponse } from "next/server";
+import { requireAdmin } from "@/lib/admin-auth";
 
 // ========================================
-// IN-MEMORY CACHE
-// Stores analytics data to avoid excessive Firebase reads
+// IN-MEMORY CACHE (instance бүрт тусдаа, зөвхөн өгөгдлийн сангийн ачааллыг багасгана)
 // ========================================
 let cachedData: any = null;
-let cacheTimestamp: number = 0;
-const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes in milliseconds
+let cacheTimestamp = 0;
+const CACHE_DURATION = 5 * 60 * 1000; // 5 минут
+
+const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+
+const respond = (data: unknown, cache: "HIT" | "MISS" | "BYPASS", extra: Record<string, string> = {}) =>
+  NextResponse.json(data, {
+    headers: {
+      // Бизнесийн статистик тул shared cache (CDN) хэзээ ч хадгалах ёсгүй
+      "Cache-Control": "private, no-store",
+      "X-Cache": cache,
+      ...extra,
+    },
+  });
+
+// users.createdAt нь зарим document дээр Firestore Timestamp, зарим дээр ISO string байдаг
+// (client сайт Timestamp, админаас үүсгэсэн хуучин document-ууд string).
+// Firestore төрлөөр нь тусад нь харьцуулдаг тул хоёр төрлөөр тус тусад нь тоолно.
+const countCreatedBetween = async (start: Date, end: Date) => {
+  const users = firestore.collection("users");
+
+  const [asTimestamp, asString] = await Promise.all([
+    users.where("createdAt", ">=", start).where("createdAt", "<", end).count().get(),
+    users
+      .where("createdAt", ">=", start.toISOString())
+      .where("createdAt", "<", end.toISOString())
+      .count()
+      .get(),
+  ]);
+
+  return asTimestamp.data().count + asString.data().count;
+};
 
 export async function GET(request: NextRequest) {
   try {
-    // Get auth token from headers
-    const authHeader = request.headers.get("authorization");
-    if (!authHeader?.startsWith("Bearer ")) {
-      return NextResponse.json(
-        { error: "Unauthorized" },
-        { status: 401 }
-      );
+    const admin = await requireAdmin(request);
+    if (!admin.ok) return admin.response;
+
+    // ?refresh=1 -> cache-ийг тойрч шинээр тооцоолно (dashboard-ын "Шинэчлэх" товч)
+    const forceRefresh = request.nextUrl.searchParams.get("refresh") === "1";
+    const nowMs = Date.now();
+    const cacheAge = nowMs - cacheTimestamp;
+
+    if (!forceRefresh && cachedData && cacheAge < CACHE_DURATION) {
+      return respond(cachedData, "HIT", { "X-Cache-Age": Math.round(cacheAge / 1000).toString() });
     }
 
-    const token = authHeader.split(" ")[1];
-    const verifiedToken = await auth.verifyIdToken(token);
-
-    // Check if user is admin
-    if (!verifiedToken.admin) {
-      return NextResponse.json(
-        { error: "Admin access required" },
-        { status: 403 }
-      );
-    }
+    const currentDate = new Date(nowMs);
 
     // ========================================
-    // CHECK CACHE FIRST
+    // Үндсэн статистик (зэрэг ажиллуулна)
     // ========================================
-    const now = Date.now();
-    const cacheAge = now - cacheTimestamp;
-    
-    // If cache exists and is less than 5 minutes old, return cached data
-    if (cachedData && cacheAge < CACHE_DURATION) {
-      console.log(`Returning cached analytics data (age: ${Math.round(cacheAge / 1000)}s)`);
-      return NextResponse.json(cachedData, {
-        headers: {
-          'Cache-Control': 'public, s-maxage=300, stale-while-revalidate=60',
-          'X-Cache': 'HIT',
-          'X-Cache-Age': Math.round(cacheAge / 1000).toString()
-        }
-      });
-    }
+    const [totalUsersSnap, subscribedSnap, totalMangasSnap, mangaChaptersSnap, xpSampleSnap] =
+      await Promise.all([
+        firestore.collection("users").count().get(),
 
-    console.log('Cache miss or expired, fetching fresh data from Firebase');
+        // Идэвхтэй эрхтэй: төлөв "subscribed" БӨГӨӨД дуусах огноо ирээдүйд байх.
+        // Хугацаа нь дууссан хэрэглэгч cron-оос үл хамааран тоологдохгүй.
+        firestore
+          .collection("users")
+          .where("subscriptionStatus", "==", "subscribed")
+          .where("subscriptionEndDate", ">", currentDate.toISOString())
+          .count()
+          .get(),
 
-    // ========================================
-    // FETCH FRESH DATA
-    // ========================================
-    const currentDate = new Date();
-    
-    // Total users count
-    const totalUsersCount = await firestore
-      .collection("users")
-      .count()
-      .get();
-    const totalUsers = totalUsersCount.data().count;
+        firestore.collection("mangas").count().get(),
 
-    // Active subscribed users count (not expired)
-    const subscribedCountSnapshot = await firestore
-      .collection("users")
-      .where("subscriptionStatus", "==", "subscribed")
-      .where("subscriptionEndDate", ">", currentDate.toISOString())
-      .count()
-      .get();
-    const subscribedCount = subscribedCountSnapshot.data().count;
+        firestore.collection("mangas").select("chapters").get(),
 
-    // Free users
-    const freeCount = totalUsers - subscribedCount;
+        // Анхаар: энэ нь жинхэнэ дундаж биш, дурын 100 хэрэглэгчийн дундаж (UI-д харагддаггүй)
+        firestore.collection("users").select("xp").limit(100).get(),
+      ]);
 
-    // Total mangas count
-    const totalMangasCount = await firestore
-      .collection("mangas")
-      .count()
-      .get();
-    const totalMangas = totalMangasCount.data().count;
+    const totalUsers = totalUsersSnap.data().count;
+    const subscribedCount = subscribedSnap.data().count;
+    const freeCount = Math.max(0, totalUsers - subscribedCount);
+    const totalMangas = totalMangasSnap.data().count;
 
-    // ========================================
-    // Aggregate chapters from manga documents
-    // ========================================
     let totalChapters = 0;
-    
-    const mangaSnapshot = await firestore
-      .collection("mangas")
-      .select("chapters")
-      .get();
-    
-    mangaSnapshot.docs.forEach(mangaDoc => {
-      const data = mangaDoc.data();
-      totalChapters += data.chapters || 0;
+    mangaChaptersSnap.docs.forEach((mangaDoc) => {
+      totalChapters += Number(mangaDoc.data().chapters) || 0;
     });
 
-    // ========================================
-    // Sample-based XP calculation
-    // ========================================
     let averageXP = 0;
-    
-    if (totalUsers > 0) {
-      const sampleSize = Math.min(100, totalUsers);
-      const xpSampleSnapshot = await firestore
-        .collection("users")
-        .select("xp")
-        .limit(sampleSize)
-        .get();
-      
+    if (xpSampleSnap.size > 0) {
       let totalSampleXP = 0;
-      xpSampleSnapshot.docs.forEach(doc => {
-        totalSampleXP += doc.data().xp || 0;
+      xpSampleSnap.docs.forEach((doc) => {
+        totalSampleXP += Number(doc.data().xp) || 0;
       });
-      
-      averageXP = Math.round(totalSampleXP / sampleSize);
+      averageXP = Math.round(totalSampleXP / xpSampleSnap.size);
     }
 
     // ========================================
-    // Weekly data
+    // 7 хоногийн интервалаар сүүлийн 8 долоо хоногийн шинэ хэрэглэгч
+    // (Week 8 = сүүлийн 7 хоног). Өмнө нь createdAt-ийг зөвхөн string гэж үздэг байсан тул
+    // Timestamp төрлийн хэрэглэгчид тоологддоггүй байв.
     // ========================================
-    const weeklyNewUsers: { [key: string]: number } = {};
-    
-    for (let i = 7; i >= 0; i--) {
-      const weekKey = `Week ${8 - i}`;
-      weeklyNewUsers[weekKey] = 0;
+    const failed: string[] = [];
+    let weeklyData: Array<{ week: string; users: number }> = [];
+
+    try {
+      weeklyData = await Promise.all(
+        Array.from({ length: 8 }, async (_, index) => {
+          const k = index + 1; // 1..8
+          const end = new Date(nowMs - (8 - k) * WEEK_MS);
+          const start = new Date(end.getTime() - WEEK_MS);
+          return { week: `Week ${k}`, users: await countCreatedBetween(start, end) };
+        })
+      );
+    } catch (error) {
+      failed.push("weeklyData");
+      console.error("[Analytics] weeklyData:", error);
+      weeklyData = Array.from({ length: 8 }, (_, i) => ({ week: `Week ${i + 1}`, users: 0 }));
     }
 
-    const eightWeeksAgo = new Date(currentDate);
-    eightWeeksAgo.setDate(currentDate.getDate() - (8 * 7));
-    
-    const recentUsersSnapshot = await firestore
-      .collection("users")
-      .where("createdAt", ">=", eightWeeksAgo.toISOString())
-      .select("createdAt")
-      .get();
-    
-    recentUsersSnapshot.docs.forEach(doc => {
-      const data = doc.data();
-      if (data.createdAt) {
-        const creationDate = new Date(data.createdAt);
-        const weeksAgo = Math.floor((currentDate.getTime() - creationDate.getTime()) / (1000 * 60 * 60 * 24 * 7));
-        
-        if (weeksAgo < 8) {
-          const weekKey = `Week ${8 - weeksAgo}`;
-          if (weeklyNewUsers[weekKey] !== undefined) {
-            weeklyNewUsers[weekKey]++;
-          }
-        }
-      }
-    });
-
-    // Calculate subscription rate
     const subscriptionRate = totalUsers > 0 ? (subscribedCount / totalUsers) * 100 : 0;
 
-    // Prepare response data
     const analyticsData = {
       stats: {
         totalUsers,
@@ -165,38 +132,26 @@ export async function GET(request: NextRequest) {
         totalMangas,
         totalChapters,
         averageXP,
-        subscriptionRate: Math.round(subscriptionRate * 100) / 100
+        subscriptionRate: Math.round(subscriptionRate * 100) / 100,
       },
       pieData: [
-        { name: 'Subscribed', value: subscribedCount, color: '#0891b2' },
-        { name: 'Free', value: freeCount, color: '#52525b' }
+        { name: "Subscribed", value: subscribedCount, color: "#0891b2" },
+        { name: "Free", value: freeCount, color: "#52525b" },
       ],
-      weeklyData: Object.entries(weeklyNewUsers).map(([week, users]) => ({
-        week,
-        users
-      }))
+      weeklyData,
+      // Бүтэлгүйтсэн хэсгийн 0-г "үнэн" гэж андуурахгүйн тулд жагсаана
+      ...(failed.length > 0 ? { partial: failed } : {}),
     };
 
-    // ========================================
-    // UPDATE CACHE
-    // ========================================
-    cachedData = analyticsData;
-    cacheTimestamp = Date.now();
+    // Бүрэн бус өгөгдлийг cache-д хадгалахгүй
+    if (failed.length === 0) {
+      cachedData = analyticsData;
+      cacheTimestamp = Date.now();
+    }
 
-    console.log('Fresh data fetched and cached');
-
-    return NextResponse.json(analyticsData, {
-      headers: {
-        'Cache-Control': 'public, s-maxage=300, stale-while-revalidate=60',
-        'X-Cache': 'MISS'
-      }
-    });
-
+    return respond(analyticsData, forceRefresh ? "BYPASS" : "MISS");
   } catch (error) {
     console.error("Error fetching analytics:", error);
-    return NextResponse.json(
-      { error: "Internal server error" },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }

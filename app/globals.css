@@ -1,11 +1,12 @@
-@import url('https://fonts.googleapis.com/css2?family=Nunito:wght@200;300;400;500;600;700;800;900&display=swap');
 @import url('https://fonts.googleapis.com/css2?family=Squada+One&display=swap');
 
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-
+/* =========================================================
+   Theme tokens (shadcn)
+   ========================================================= */
 
 :root {
   --radius: 0.625rem;
@@ -40,41 +41,57 @@
   --sidebar-accent-foreground: oklch(0.21 0.006 285.885);
   --sidebar-border: oklch(0.92 0.004 286.32);
   --sidebar-ring: oklch(0.705 0.015 286.067);
+
+  /* Cyberpunk палитр */
+  --cy-void: #04050a;
+  --cy-panel: #0a0d18;
+  --cy-line: rgba(0, 240, 255, 0.16);
+  --cy-cyan: #00f0ff;
+  --cy-magenta: #ff2e88;
+  --cy-violet: #8b6cff;
+  --cy-amber: #ffd23f;
 }
 
+/* Dark = Cyberpunk. Админ бүхэлдээ энэ горимд ажиллана. */
 .dark {
-  --background: oklch(0.141 0.005 285.823);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.21 0.006 285.885);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.21 0.006 285.885);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.92 0.004 286.32);
-  --primary-foreground: oklch(0.21 0.006 285.885);
-  --secondary: oklch(0.274 0.006 286.033);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.274 0.006 286.033);
-  --muted-foreground: oklch(0.705 0.015 286.067);
-  --accent: oklch(0.274 0.006 286.033);
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.552 0.016 285.938);
-  --chart-1: oklch(0.488 0.243 264.376);
-  --chart-2: oklch(0.696 0.17 162.48);
-  --chart-3: oklch(0.769 0.188 70.08);
-  --chart-4: oklch(0.627 0.265 303.9);
-  --chart-5: oklch(0.645 0.246 16.439);
-  --sidebar: oklch(0.21 0.006 285.885);
-  --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.274 0.006 286.033);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.552 0.016 285.938);
+  color-scheme: dark;
+
+  --background: oklch(0.115 0.02 270);
+  --foreground: oklch(0.97 0.005 270);
+  --card: oklch(0.15 0.025 272);
+  --card-foreground: oklch(0.97 0.005 270);
+  --popover: oklch(0.15 0.025 272);
+  --popover-foreground: oklch(0.97 0.005 270);
+  --primary: oklch(0.88 0.14 200);            /* neon cyan */
+  --primary-foreground: oklch(0.14 0.03 270);
+  --secondary: oklch(0.22 0.035 275);
+  --secondary-foreground: oklch(0.97 0.005 270);
+  --muted: oklch(0.2 0.03 275);
+  --muted-foreground: oklch(0.72 0.03 270);
+  --accent: oklch(0.24 0.05 285);
+  --accent-foreground: oklch(0.97 0.005 270);
+  --destructive: oklch(0.68 0.25 5);          /* neon magenta-red */
+  --border: oklch(0.88 0.14 200 / 14%);
+  --input: oklch(0.88 0.14 200 / 18%);
+  --ring: oklch(0.88 0.14 200 / 60%);
+  --chart-1: oklch(0.88 0.14 200);            /* cyan */
+  --chart-2: oklch(0.68 0.25 5);              /* magenta */
+  --chart-3: oklch(0.65 0.2 285);             /* violet */
+  --chart-4: oklch(0.88 0.17 95);             /* amber */
+  --chart-5: oklch(0.8 0.18 160);             /* mint */
+  --sidebar: oklch(0.095 0.02 270);
+  --sidebar-foreground: oklch(0.97 0.005 270);
+  --sidebar-primary: oklch(0.88 0.14 200);
+  --sidebar-primary-foreground: oklch(0.14 0.03 270);
+  --sidebar-accent: oklch(0.22 0.045 285);
+  --sidebar-accent-foreground: oklch(0.97 0.005 270);
+  --sidebar-border: oklch(0.88 0.14 200 / 14%);
+  --sidebar-ring: oklch(0.88 0.14 200 / 60%);
 }
+
+/* =========================================================
+   Base
+   ========================================================= */
 
 @layer base {
   * {
@@ -83,166 +100,253 @@
     text-rendering: optimizeLegibility;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
-    
+
     scrollbar-width: thin;
-    scrollbar-color: #52525b #27272a;
+    scrollbar-color: rgba(0, 240, 255, 0.35) #05060d;
   }
-  
+
   body {
     @apply bg-background text-foreground;
     font-family: var(--font-nunito), 'Nunito', sans-serif;
   }
-  
+
   h1, h2, h3, h4, h5, h6,
   p, span, div, button, input, textarea, select,
   .btn, .card, .modal {
     font-family: var(--font-nunito), 'Nunito', sans-serif;
   }
-  
+
+  ::selection {
+    background: rgba(0, 240, 255, 0.28);
+    color: #fff;
+  }
+
+  /* Scrollbar */
   *::-webkit-scrollbar {
     width: 8px;
     height: 8px;
   }
 
   *::-webkit-scrollbar-track {
-    background: #27272a;
-    border-radius: 4px;
+    background: #05060d;
   }
 
   *::-webkit-scrollbar-thumb {
-    background: #52525b;
-    border-radius: 4px;
+    background: rgba(0, 240, 255, 0.3);
     transition: background-color 0.2s ease;
   }
 
   *::-webkit-scrollbar-thumb:hover {
-    background: #71717a;
+    background: rgba(0, 240, 255, 0.6);
   }
 
   *::-webkit-scrollbar-corner {
-    background: #27272a;
+    background: #05060d;
   }
 
-  *::-webkit-scrollbar-button {
-    display: none !important;
-    width: 0 !important;
-    height: 0 !important;
-  }
-
+  *::-webkit-scrollbar-button,
   *::-webkit-scrollbar-button:start:decrement,
-  *::-webkit-scrollbar-button:end:increment {
-    display: none !important;
-    width: 0 !important;
-    height: 0 !important;
-  }
-
+  *::-webkit-scrollbar-button:end:increment,
   *::-webkit-scrollbar-button:vertical:start:decrement,
   *::-webkit-scrollbar-button:vertical:end:increment,
   *::-webkit-scrollbar-button:horizontal:start:decrement,
   *::-webkit-scrollbar-button:horizontal:end:increment {
     display: none !important;
+    width: 0 !important;
+    height: 0 !important;
   }
 }
 
+/* =========================================================
+   Utilities
+   ========================================================= */
+
 @layer utilities {
-  .font-nunito-extralight {
-    font-family: var(--font-nunito), 'Nunito', sans-serif;
-    font-weight: 200;
-  }
-  
-  .font-nunito-light {
-    font-family: var(--font-nunito), 'Nunito', sans-serif;
-    font-weight: 300;
-  }
-  
-  .font-nunito-regular {
-    font-family: var(--font-nunito), 'Nunito', sans-serif;
-    font-weight: 400;
-  }
-  
-  .font-nunito-medium {
-    font-family: var(--font-nunito), 'Nunito', sans-serif;
-    font-weight: 500;
-  }
-  
-  .font-nunito-semibold {
-    font-family: var(--font-nunito), 'Nunito', sans-serif;
-    font-weight: 600;
-  }
-  
-  .font-nunito-bold {
-    font-family: var(--font-nunito), 'Nunito', sans-serif;
-    font-weight: 700;
-  }
-  
-  .font-nunito-extrabold {
-    font-family: var(--font-nunito), 'Nunito', sans-serif;
-    font-weight: 800;
-  }
-  
-  .font-nunito-black {
-    font-family: var(--font-nunito), 'Nunito', sans-serif;
-    font-weight: 900;
-  }
-  
+  .font-nunito-extralight { font-family: var(--font-nunito), 'Nunito', sans-serif; font-weight: 200; }
+  .font-nunito-light      { font-family: var(--font-nunito), 'Nunito', sans-serif; font-weight: 300; }
+  .font-nunito-regular    { font-family: var(--font-nunito), 'Nunito', sans-serif; font-weight: 400; }
+  .font-nunito-medium     { font-family: var(--font-nunito), 'Nunito', sans-serif; font-weight: 500; }
+  .font-nunito-semibold   { font-family: var(--font-nunito), 'Nunito', sans-serif; font-weight: 600; }
+  .font-nunito-bold       { font-family: var(--font-nunito), 'Nunito', sans-serif; font-weight: 700; }
+  .font-nunito-extrabold  { font-family: var(--font-nunito), 'Nunito', sans-serif; font-weight: 800; }
+  .font-nunito-black      { font-family: var(--font-nunito), 'Nunito', sans-serif; font-weight: 900; }
+
   .scrollbar-styled {
     scrollbar-width: thin;
-    scrollbar-color: #52525b #18181b;
+    scrollbar-color: rgba(0, 240, 255, 0.35) #05060d;
   }
-
   .scrollbar-styled::-webkit-scrollbar {
     width: 10px;
   }
-
   .scrollbar-styled::-webkit-scrollbar-track {
-    background: #18181b;
-    border-radius: 6px;
+    background: #05060d;
   }
-
   .scrollbar-styled::-webkit-scrollbar-thumb {
-    background: #52525b;
-    border-radius: 6px;
-    border: 2px solid #18181b;
+    background: rgba(0, 240, 255, 0.35);
+    border: 2px solid #05060d;
   }
-
   .scrollbar-styled::-webkit-scrollbar-thumb:hover {
-    background: #71717a;
+    background: rgba(0, 240, 255, 0.6);
   }
-
   .scrollbar-styled::-webkit-scrollbar-button {
     display: none;
     width: 0;
     height: 0;
   }
+}
 
+/* =========================================================
+   Animations
+   ========================================================= */
 
-  @keyframes rotation {
-    0% { transform: rotate(0deg); }
-    100% { transform: rotate(360deg); }
-  }
+@keyframes rotation {
+  0%   { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
 
-  @keyframes rotationBack {
-    0% { transform: rotate(0deg); }
-    100% { transform: rotate(-360deg); }
-  }
+@keyframes rotationBack {
+  0%   { transform: rotate(0deg); }
+  100% { transform: rotate(-360deg); }
 }
 
 .loader {
   width: 48px;
   height: 48px;
-  border: 5px solid #ffff; /* cyan-400 */
+  border: 5px solid var(--cy-cyan);
   border-bottom-color: transparent;
   border-radius: 50%;
   display: inline-block;
   box-sizing: border-box;
+  filter: drop-shadow(0 0 6px rgba(0, 240, 255, 0.6));
   animation: rotation 1s linear infinite;
 }
 
-@keyframes rotation {
-  0% {
-    transform: rotate(0deg);
-  }
-  100% {
-    transform: rotate(360deg);
-  }
+/* =========================================================
+   Cyberpunk admin theme
+   ========================================================= */
+
+.font-display {
+  font-family: var(--font-exo), var(--font-nunito), sans-serif;
+}
+
+/* Хуудасны арын дэвсгэр: бараан + нарийн тор + хоёр өнгийн гэрэл */
+.cyber-bg {
+  position: relative;
+  background-color: var(--cy-void);
+  background-image:
+    radial-gradient(900px 500px at 100% 0%, rgba(255, 46, 136, 0.08), transparent 60%),
+    radial-gradient(900px 500px at 0% 100%, rgba(0, 240, 255, 0.08), transparent 60%),
+    linear-gradient(rgba(0, 240, 255, 0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0, 240, 255, 0.035) 1px, transparent 1px);
+  background-size: auto, auto, 44px 44px, 44px 44px;
+}
+
+/* Scanline давхарга (зөвхөн хуудасны талбай дээр) */
+.cyber-bg::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background: repeating-linear-gradient(
+    to bottom,
+    rgba(255, 255, 255, 0.018) 0,
+    rgba(255, 255, 255, 0.018) 1px,
+    transparent 1px,
+    transparent 3px
+  );
+}
+
+/* Панел: нимгэн хүрээ + 2 булангийн хаалт */
+.cyber-panel {
+  position: relative;
+  background: linear-gradient(180deg, rgba(13, 16, 32, 0.92), rgba(8, 10, 20, 0.92));
+  border: 1px solid var(--cy-line);
+  border-radius: 2px;
+  box-shadow: inset 0 0 40px rgba(0, 240, 255, 0.025);
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.cyber-panel::before,
+.cyber-panel::after {
+  content: '';
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  border: 0 solid var(--cy-cyan);
+  pointer-events: none;
+}
+.cyber-panel::before {
+  top: -1px;
+  left: -1px;
+  border-width: 2px 0 0 2px;
+}
+.cyber-panel::after {
+  bottom: -1px;
+  right: -1px;
+  border-width: 0 2px 2px 0;
+}
+
+.cyber-panel-hover:hover,
+.cyber-panel-hover:focus-visible {
+  border-color: rgba(0, 240, 255, 0.55);
+  box-shadow: 0 0 28px rgba(0, 240, 255, 0.14), inset 0 0 40px rgba(0, 240, 255, 0.04);
+  outline: none;
+}
+
+/* Warning (сэжигтэй хэрэглэгчид) панелийн өнгө */
+.cyber-panel-warn {
+  border-color: rgba(255, 46, 136, 0.28);
+}
+.cyber-panel-warn::before,
+.cyber-panel-warn::after {
+  border-color: var(--cy-magenta);
+}
+
+/* Статистик картын өнгө: style={{ '--accent': '#00f0ff' }} */
+.cyber-stat {
+  border-left: 2px solid var(--accent, var(--cy-cyan));
+}
+.cyber-glow {
+  color: var(--accent, var(--cy-cyan));
+  text-shadow: 0 0 16px color-mix(in srgb, var(--accent, #00f0ff) 55%, transparent);
+}
+
+/* Жижиг товч. `.dark` угтвар нь shadcn Button-ы dark: хувилбараас давамгайлахад хэрэгтэй */
+.cyber-btn,
+.dark .cyber-btn {
+  border: 1px solid var(--cy-line);
+  background: rgba(0, 240, 255, 0.06);
+  color: var(--cy-cyan);
+  transition: background 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+}
+.cyber-btn:hover:not(:disabled),
+.dark .cyber-btn:hover:not(:disabled) {
+  background: rgba(0, 240, 255, 0.16);
+  border-color: rgba(0, 240, 255, 0.6);
+  box-shadow: 0 0 14px rgba(0, 240, 255, 0.25);
+  color: var(--cy-cyan);
+}
+.cyber-btn:focus-visible {
+  outline: 2px solid var(--cy-cyan);
+  outline-offset: 2px;
+}
+.cyber-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Scrollable жагсаалтын scrollbar (глобал scrollbar-тай ижил, нэр нь нийцтэй байлгахын тулд) */
+.cyber-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(0, 240, 255, 0.35) transparent;
+}
+.cyber-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+.cyber-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+.cyber-scroll::-webkit-scrollbar-thumb {
+  background: rgba(0, 240, 255, 0.35);
 }

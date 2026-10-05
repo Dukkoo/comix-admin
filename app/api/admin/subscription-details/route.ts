@@ -1,256 +1,163 @@
 // app/api/admin/subscription-details/route.ts
-import { auth, firestore } from "@/firebase/server";
+import { firestore } from "@/firebase/server";
 import { NextRequest, NextResponse } from "next/server";
+import { requireAdmin } from "@/lib/admin-auth";
 
 // ========================================
-// IN-MEMORY CACHE
+// IN-MEMORY CACHE (instance бүрт тусдаа, зөвхөн өгөгдлийн сангийн ачааллыг багасгана)
 // ========================================
 let cachedData: any = null;
-let cacheTimestamp: number = 0;
-const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
+let cacheTimestamp = 0;
+const CACHE_DURATION = 5 * 60 * 1000; // 5 минут
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+const TZ_OFFSET_MS = 8 * 60 * 60 * 1000; // Улаанбаатар UTC+8 (зуны цаг байхгүй)
+
+// Серверийн цагийн бүс (ихэвчлэн UTC) биш, Монголын цагаар өдөр/сарыг тооцно
+const localDateKey = (date: Date) =>
+  new Date(date.getTime() + TZ_OFFSET_MS).toISOString().slice(0, 10);
+
+const startOfLocalMonth = (date: Date, monthOffset = 0) => {
+  const local = new Date(date.getTime() + TZ_OFFSET_MS);
+  return new Date(
+    Date.UTC(local.getUTCFullYear(), local.getUTCMonth() + monthOffset, 1) - TZ_OFFSET_MS
+  );
+};
+
+const respond = (data: unknown, cache: "HIT" | "MISS" | "BYPASS") =>
+  NextResponse.json(data, {
+    headers: {
+      // Орлогын мэдээлэл тул shared cache (CDN) хэзээ ч хадгалах ёсгүй
+      "Cache-Control": "private, no-store",
+      "X-Cache": cache,
+    },
+  });
 
 export async function GET(request: NextRequest) {
-  console.log('[Subscription Details] API called');
-  
   try {
-    // Get auth token from headers
-    const authHeader = request.headers.get("authorization");
-    if (!authHeader?.startsWith("Bearer ")) {
-      console.error('[Subscription Details] No authorization header');
-      return NextResponse.json(
-        { error: "Unauthorized" },
-        { status: 401 }
-      );
+    const admin = await requireAdmin(request);
+    if (!admin.ok) return admin.response;
+
+    // ?refresh=1 -> cache-ийг тойрч шинээр тооцоолно (модалын "Шинэчлэх" товч)
+    const forceRefresh = request.nextUrl.searchParams.get("refresh") === "1";
+    const nowMs = Date.now();
+
+    if (!forceRefresh && cachedData && nowMs - cacheTimestamp < CACHE_DURATION) {
+      return respond(cachedData, "HIT");
     }
 
-    const token = authHeader.split(" ")[1];
-    const verifiedToken = await auth.verifyIdToken(token);
+    const now = new Date(nowMs);
+    const nowIso = now.toISOString();
+    const monthStart = startOfLocalMonth(now);
+    const nextMonthStart = startOfLocalMonth(now, 1);
+    const sevenDaysLaterIso = new Date(nowMs + 7 * DAY_MS).toISOString();
 
-    // Check if user is admin
-    if (!verifiedToken.admin) {
-      console.error('[Subscription Details] User is not admin');
-      return NextResponse.json(
-        { error: "Admin access required" },
-        { status: 403 }
-      );
-    }
-
-    // ========================================
-    // CHECK CACHE
-    // ========================================
-    const now = Date.now();
-    const cacheAge = now - cacheTimestamp;
-    
-    if (cachedData && cacheAge < CACHE_DURATION) {
-      console.log(`[Subscription Details] Returning cached data (age: ${Math.round(cacheAge / 1000)}s)`);
-      return NextResponse.json(cachedData, {
-        headers: {
-          'Cache-Control': 'public, s-maxage=300, stale-while-revalidate=60',
-          'X-Cache': 'HIT'
-        }
-      });
-    }
-
-    console.log('[Subscription Details] Cache miss, fetching fresh data...');
-
-    // ========================================
-    // FETCH FRESH DATA
-    // ========================================
-    const currentDate = new Date();
-
-    // 1. Expiring soon (7 days)
-    console.log('[Subscription Details] Fetching expiring subscriptions...');
-    const sevenDaysLater = new Date(currentDate);
-    sevenDaysLater.setDate(currentDate.getDate() + 7);
-
-    let expiringSoonCount = 0;
-    try {
-      const expiringSoonSnapshot = await firestore
-        .collection("users")
-        .where("subscriptionStatus", "==", "subscribed")
-        .where("subscriptionEndDate", ">", currentDate.toISOString())
-        .where("subscriptionEndDate", "<=", sevenDaysLater.toISOString())
-        .select("subscriptionEndDate")
-        .get();
-      expiringSoonCount = expiringSoonSnapshot.size;
-      console.log('[Subscription Details] Expiring soon count:', expiringSoonCount);
-    } catch (error) {
-      console.error('[Subscription Details] Error fetching expiring subscriptions:', error);
-    }
-
-    // 2. New subscribers this month
-    console.log('[Subscription Details] Fetching new subscribers...');
-    const startOfMonth = new Date(currentDate.getFullYear(), currentDate.getMonth(), 1);
-    
-    let newSubscribersCount = 0;
-    try {
-      const newSubscribersSnapshot = await firestore
-        .collection("users")
-        .where("subscriptionStatus", "==", "subscribed")
-        .where("subscriptionStartDate", ">=", startOfMonth.toISOString())
-        .select("subscriptionStartDate")
-        .get();
-      newSubscribersCount = newSubscribersSnapshot.size;
-      console.log('[Subscription Details] New subscribers count:', newSubscribersCount);
-    } catch (error) {
-      console.error('[Subscription Details] Error fetching new subscribers:', error);
-    }
-
-    // 3. Trends (90, 30, 7 days)
-    console.log('[Subscription Details] Fetching trends...');
     const periods = [
-      { days: 90, label: "90 хоног" },
-      { days: 30, label: "30 хоног" },
-      { days: 7, label: "7 хоног" },
+      { days: 90, label: "90 хоног", count: 0 },
+      { days: 30, label: "30 хоног", count: 0 },
+      { days: 7, label: "7 хоног", count: 0 },
     ];
 
-    const trendData = await Promise.all(
-      periods.map(async (period) => {
-        try {
-          const periodStart = new Date(currentDate);
-          periodStart.setDate(currentDate.getDate() - period.days);
-
-          const snapshot = await firestore
-            .collection("users")
-            .where("subscriptionStatus", "==", "subscribed")
-            .where("subscriptionStartDate", ">=", periodStart.toISOString())
-            .where("subscriptionStartDate", "<=", currentDate.toISOString())
-            .select("subscriptionStartDate")
-            .get();
-
-          console.log(`[Subscription Details] Trend ${period.label}:`, snapshot.size);
-          return {
-            period: period.label,
-            count: snapshot.size,
-            days: period.days,
-          };
-        } catch (error) {
-          console.error(`[Subscription Details] Error fetching trend ${period.label}:`, error);
-          return {
-            period: period.label,
-            count: 0,
-            days: period.days,
-          };
-        }
-      })
-    );
-
-    // 4. MRR - payment_logs-аас тооцох (хамгийн зөв арга)
-    console.log('[Subscription Details] Calculating current month revenue...');
-    let monthlyRevenue = 0;
-    let activeSubscribersCount = 0;
-
-    try {
-      const endOfMonth = new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 0);
-
-      // ✅ payment_logs-аас энэ сарын төлбөрүүдийг авах
-      const paymentLogsSnapshot = await firestore
-        .collection("payment_logs")
-        .where("processedAt", ">=", startOfMonth.toISOString())
-        .where("processedAt", "<=", endOfMonth.toISOString())
-        .select("amount", "userId")
-        .get();
-
-      console.log('[Subscription Details] This month payment logs:', paymentLogsSnapshot.size);
-
-      // Давхардсан userId-г арилгаж тооцох
-      const uniqueUserIds = new Set<string>();
-
-      paymentLogsSnapshot.docs.forEach((doc) => {
-        const data = doc.data();
-        if (data.amount) {
-          monthlyRevenue += data.amount;
-        }
-        if (data.userId) {
-          uniqueUserIds.add(data.userId);
-        }
-      });
-
-      activeSubscribersCount = uniqueUserIds.size;
-
-      console.log('[Subscription Details] Monthly revenue:', monthlyRevenue, 'Unique users:', activeSubscribersCount);
-    } catch (error) {
-      console.error('[Subscription Details] Error calculating revenue from payment_logs:', error);
-
-      // Fallback: users collection-аас тооцох
-      try {
-        // ✅ Шинэ үнэ + planId ашиглах
-        const subscriptionPrices: { [key: string]: number } = {
-          '1month': 7900,
-          '3month': 20900,
-          '6month': 43900,
-        };
-
-        const endOfMonth = new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 0);
-
-        const monthSubscriptionsSnapshot = await firestore
-          .collection("users")
-          .where("subscriptionStatus", "==", "subscribed")
-          .where("lastPaymentDate", ">=", startOfMonth.toISOString())
-          .where("lastPaymentDate", "<=", endOfMonth.toISOString())
-          .select("lastPaymentAmount", "subscriptionEndDate")
-          .get();
-
-        monthSubscriptionsSnapshot.docs.forEach((doc) => {
-          const data = doc.data();
-          if (data.subscriptionEndDate) {
-            const endDate = new Date(data.subscriptionEndDate);
-            if (endDate > currentDate) {
-              activeSubscribersCount++;
-              // lastPaymentAmount шууд ашиглах
-              monthlyRevenue += data.lastPaymentAmount || 0;
-            }
-          }
-        });
-      } catch (fallbackError) {
-        console.error('[Subscription Details] Fallback revenue calculation also failed:', fallbackError);
-      }
-    }
-
-    // 5. Timeline data (last 90 days)
-    console.log('[Subscription Details] Fetching timeline...');
-    const dailyActivations: { [key: string]: number } = {};
-    
+    // Сүүлийн 90 өдрийн (Монголын цагаар) түлхүүрүүд
+    const dailyActivations: Record<string, number> = {};
     for (let i = 89; i >= 0; i--) {
-      const date = new Date(currentDate);
-      date.setDate(currentDate.getDate() - i);
-      const dateKey = date.toISOString().split('T')[0];
-      dailyActivations[dateKey] = 0;
+      dailyActivations[localDateKey(new Date(nowMs - i * DAY_MS))] = 0;
     }
 
-    try {
-      const ninetyDaysAgo = new Date(currentDate);
-      ninetyDaysAgo.setDate(currentDate.getDate() - 90);
+    const failed: string[] = [];
+    let expiringSoonCount = 0;
+    let newSubscribersCount = 0;
+    let monthlyRevenue = 0;
+    let payerCount = 0;
 
-      const timelineSnapshot = await firestore
+    const [expiringResult, activationsResult, paymentsResult] = await Promise.allSettled([
+      // 1) 7 хоногт дуусах: count() aggregation (document татахгүй, нэг талбарын range тул
+      //    composite index шаардахгүй; эрх идэвхтэй хэрэглэгчийн л дуусах огноо ирээдүйд байдаг)
+      firestore
         .collection("users")
-        .where("subscriptionStartDate", ">=", ninetyDaysAgo.toISOString())
-        .select("subscriptionStartDate")
-        .get();
+        .where("subscriptionEndDate", ">", nowIso)
+        .where("subscriptionEndDate", "<=", sevenDaysLaterIso)
+        .count()
+        .get(),
 
-      console.log('[Subscription Details] Timeline entries:', timelineSnapshot.size);
+      // 2) Сүүлийн 90 өдөрт эхэлсэн эрхүүд: нэг query-ээр timeline, trend, шинэ хэрэглэгчийг гаргана
+      //    (өмнө нь 5 тусдаа query байсан)
+      firestore
+        .collection("users")
+        .where("subscriptionStartDate", ">=", new Date(nowMs - 91 * DAY_MS).toISOString())
+        .select("subscriptionStartDate", "subscriptionStatus", "subscriptionEndDate")
+        .get(),
 
-      timelineSnapshot.docs.forEach((doc) => {
-        const data = doc.data();
-        if (data.subscriptionStartDate) {
-          const dateKey = data.subscriptionStartDate.split('T')[0];
-          if (dailyActivations[dateKey] !== undefined) {
-            dailyActivations[dateKey]++;
-          }
-        }
-      });
-    } catch (error) {
-      console.error('[Subscription Details] Error fetching timeline:', error);
+      // 3) Энэ сарын төлбөр (Монголын цагаар сарын эхнээс дараа сарын эхэн хүртэл)
+      //    Өмнө нь сарын сүүлийн өдөр хасагдаж байсан (endOfMonth = сүүлийн өдрийн 00:00)
+      firestore
+        .collection("payment_logs")
+        .where("processedAt", ">=", monthStart.toISOString())
+        .where("processedAt", "<", nextMonthStart.toISOString())
+        .select("amount", "userId", "invoiceId")
+        .get(),
+    ]);
+
+    if (expiringResult.status === "fulfilled") {
+      expiringSoonCount = expiringResult.value.data().count;
+    } else {
+      failed.push("expiringSoon");
+      console.error("[Subscription Details] expiringSoon:", expiringResult.reason);
     }
 
-    const timelineData = Object.entries(dailyActivations).map(([date, count]) => ({
-      date,
-      count,
-    }));
+    if (activationsResult.status === "fulfilled") {
+      activationsResult.value.docs.forEach((doc) => {
+        const data = doc.data();
+        const startMs = Date.parse(data.subscriptionStartDate);
+        if (isNaN(startMs) || startMs > nowMs) return;
 
-    // ========================================
-    // PREPARE RESPONSE
-    // ========================================
+        // Timeline: тухайн өдөр идэвхжүүлсэн бүх хүн (төлвөөс үл хамааран)
+        const key = localDateKey(new Date(startMs));
+        if (dailyActivations[key] !== undefined) dailyActivations[key]++;
+
+        // Trend, шинэ хэрэглэгч: одоо ч эрх нь идэвхтэй хүмүүс.
+        // Хугацаа нь дууссан эсэхийг огнооноос шууд шалгана (cron-оос хамаарахгүй)
+        const endMs = data.subscriptionEndDate ? Date.parse(data.subscriptionEndDate) : NaN;
+        const isActive =
+          data.subscriptionStatus === "subscribed" && (isNaN(endMs) || endMs > nowMs);
+        if (!isActive) return;
+
+        if (startMs >= monthStart.getTime()) newSubscribersCount++;
+        periods.forEach((p) => {
+          if (startMs >= nowMs - p.days * DAY_MS) p.count++;
+        });
+      });
+    } else {
+      failed.push("activations");
+      console.error("[Subscription Details] activations:", activationsResult.reason);
+    }
+
+    if (paymentsResult.status === "fulfilled") {
+      const seenInvoices = new Set<string>();
+      const payers = new Set<string>();
+
+      paymentsResult.value.docs.forEach((doc) => {
+        const data = doc.data();
+
+        // Нэг invoice 2 удаа бүртгэгдсэн (давхар) бол орлогод нэг л удаа тооцно
+        if (data.invoiceId) {
+          const invoiceId = String(data.invoiceId);
+          if (seenInvoices.has(invoiceId)) return;
+          seenInvoices.add(invoiceId);
+        }
+
+        const amount = Number(data.amount);
+        if (Number.isFinite(amount) && amount > 0) monthlyRevenue += amount;
+        if (data.userId) payers.add(String(data.userId));
+      });
+
+      payerCount = payers.size;
+    } else {
+      // Өөр аргаар (users collection) тооцсон тоог ижил нэрээр харуулбал төөрөгдөл үүсгэнэ
+      failed.push("revenue");
+      console.error("[Subscription Details] revenue:", paymentsResult.reason);
+    }
+
     const detailsData = {
       expiringSoon: {
         count: expiringSoonCount,
@@ -260,35 +167,26 @@ export async function GET(request: NextRequest) {
         count: newSubscribersCount,
         label: "Энэ сард шинээр",
       },
-      trends: trendData,
+      trends: periods.map((p) => ({ period: p.label, count: p.count, days: p.days })),
       mrr: {
         amount: monthlyRevenue,
-        activeCount: activeSubscribersCount,
+        activeCount: payerCount,
         currency: "₮",
       },
-      timeline: timelineData,
+      timeline: Object.entries(dailyActivations).map(([date, count]) => ({ date, count })),
+      // Зарим query бүтэлгүйтсэн бол тэр хэсгийн 0-г "үнэн" гэж андуурахгүйн тулд жагсаана
+      ...(failed.length > 0 ? { partial: failed } : {}),
     };
 
-    // ========================================
-    // UPDATE CACHE
-    // ========================================
-    cachedData = detailsData;
-    cacheTimestamp = Date.now();
+    // Бүрэн бус өгөгдлийг cache-д хадгалахгүй
+    if (failed.length === 0) {
+      cachedData = detailsData;
+      cacheTimestamp = Date.now();
+    }
 
-    console.log('[Subscription Details] Data fetched successfully');
-
-    return NextResponse.json(detailsData, {
-      headers: {
-        'Cache-Control': 'public, s-maxage=300, stale-while-revalidate=60',
-        'X-Cache': 'MISS'
-      }
-    });
-
+    return respond(detailsData, forceRefresh ? "BYPASS" : "MISS");
   } catch (error) {
     console.error("[Subscription Details] Fatal error:", error);
-    return NextResponse.json(
-      { error: "Internal server error", details: error instanceof Error ? error.message : String(error) },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }

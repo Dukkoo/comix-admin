@@ -1,10 +1,10 @@
+// app/projects/chapters/[mangaId]/chapter-table.tsx
 "use client";
 
-import { Edit2, Plus, Trash2, Search, Gift } from "lucide-react";
+import { useState, useEffect, useMemo } from "react";
 import Link from "next/link";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Card, CardContent } from "@/components/ui/card";
+import { ArrowLeft, Edit2, Plus, Trash2, Search, X, Gift, Layers } from "lucide-react";
+import { toast } from "sonner";
 import {
   Dialog,
   DialogContent,
@@ -13,123 +13,94 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { useAuth } from '@/app/providers';
-import { toast } from "sonner";
-import { useRouter } from "next/navigation";
-import { useState, useEffect } from "react";
+import { useAuth } from "@/app/providers";
 import { fetchChapters, deleteChapter, updateChapter, Chapter } from "@/utils/chapter-api";
 
-export default function ChapterTable({ 
-  mangaId, 
-  mangaTitle, 
-  page = 1 
-}: { 
+export default function ChapterTable({
+  mangaId,
+  mangaTitle,
+}: {
   mangaId: string;
   mangaTitle: string;
   page?: number;
 }) {
   const auth = useAuth();
-  const router = useRouter();
   const [chapters, setChapters] = useState<Chapter[]>([]);
-  const [filteredChapters, setFilteredChapters] = useState<Chapter[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
-  const [totalPages, setTotalPages] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [togglingId, setTogglingId] = useState<string | null>(null);
-  const [deleteDialog, setDeleteDialog] = useState<{
-    isOpen: boolean;
-    chapterId: string;
-    chapterNumber: number;
-  }>({
+  const [deleting, setDeleting] = useState(false);
+  const [deleteDialog, setDeleteDialog] = useState({
     isOpen: false,
     chapterId: "",
     chapterNumber: 0,
   });
 
-  useEffect(() => {
-    const loadChapters = async () => {
-      try {
-        // Fetch all chapters without pagination (set pageSize to 9999)
-        const result = await fetchChapters(mangaId, 1, 9999);
-        // Sort chapters by chapter number descending (latest first)
-        const sortedChapters = (result.data || []).sort((a, b) => b.chapterNumber - a.chapterNumber);
-        setChapters(sortedChapters);
-        setFilteredChapters(sortedChapters);
-        setTotalPages(result.totalPages);
-      } catch (error) {
-        console.error("Error loading chapters:", error);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    loadChapters();
-  }, [mangaId]);
-
-  // Filter chapters based on search query
-  useEffect(() => {
-    if (searchQuery.trim() === "") {
-      setFilteredChapters(chapters);
-    } else {
-      const filtered = chapters.filter(chapter =>
-        chapter.chapterNumber.toString().includes(searchQuery.trim())
-      );
-      setFilteredChapters(filtered);
+  const loadChapters = async () => {
+    setLoading(true);
+    setLoadError(null);
+    try {
+      // Бүх бүлгийг нэг дор авна (хуудаслалтгүй)
+      const result = await fetchChapters(mangaId, 1, 9999);
+      // Хамгийн сүүлийнх нь эхэнд
+      const sorted = [...(result.data || [])].sort((a, b) => b.chapterNumber - a.chapterNumber);
+      setChapters(sorted);
+    } catch (error) {
+      console.error("Error loading chapters:", error);
+      setLoadError(error instanceof Error ? error.message : "Unknown error");
+    } finally {
+      setLoading(false);
     }
-  }, [searchQuery, chapters]);
-
-  const handleSearch = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setSearchQuery(e.target.value);
   };
 
+  useEffect(() => {
+    loadChapters();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mangaId]);
+
+  const visible = useMemo(() => {
+    const q = searchQuery.trim();
+    if (!q) return chapters;
+    return chapters.filter((chapter) => chapter.chapterNumber.toString().includes(q));
+  }, [chapters, searchQuery]);
+
   const showDeleteDialog = (chapterId: string, chapterNumber: number) => {
-    setDeleteDialog({
-      isOpen: true,
-      chapterId,
-      chapterNumber,
-    });
+    setDeleteDialog({ isOpen: true, chapterId, chapterNumber });
   };
 
   const closeDeleteDialog = () => {
-    setDeleteDialog({
-      isOpen: false,
-      chapterId: "",
-      chapterNumber: 0,
-    });
+    setDeleteDialog({ isOpen: false, chapterId: "", chapterNumber: 0 });
   };
 
   const handleDelete = async () => {
+    const { chapterId, chapterNumber } = deleteDialog;
+
+    setDeleting(true);
+    // "Хүлээлт" toast хаагдахгүй үлддэг байсан тул нэг toast-ыг шинэчилнэ
+    const toastId = toast.loading("Устгаж байна...");
+
     try {
       const token = await auth?.currentUser?.getIdToken();
       if (!token) {
-        toast.error("Authentication required");
+        toast.error("Нэвтрээгүй байна", { id: toastId });
         return;
       }
 
-      toast.loading("Deleting chapter...");
+      const response = await deleteChapter(mangaId, chapterId, token);
 
-      const response = await deleteChapter(mangaId, deleteDialog.chapterId, token);
-      
       if (response.error) {
-        toast.error("Failed to delete chapter", {
-          description: response.message,
-        });
+        toast.error("Устгаж чадсангүй", { id: toastId, description: response.message });
         return;
       }
 
-      toast.success("Chapter deleted successfully", {
-        description: `Chapter ${deleteDialog.chapterNumber} has been removed`,
-      });
-
-      // Remove the deleted chapter from the local state
-      const updatedChapters = chapters.filter(chapter => chapter.id !== deleteDialog.chapterId);
-      setChapters(updatedChapters);
-      setFilteredChapters(updatedChapters);
-      
+      toast.success("Устгагдлаа", { id: toastId, description: `Бүлэг ${chapterNumber}` });
+      setChapters((prev) => prev.filter((chapter) => chapter.id !== chapterId));
     } catch (error) {
       console.error("Error deleting chapter:", error);
-      toast.error("Failed to delete chapter");
+      toast.error("Устгаж чадсангүй", { id: toastId });
     } finally {
+      setDeleting(false);
       closeDeleteDialog();
     }
   };
@@ -139,7 +110,7 @@ export default function ChapterTable({
       setTogglingId(chapter.id);
       const token = await auth?.currentUser?.getIdToken();
       if (!token) {
-        toast.error("Authentication required");
+        toast.error("Нэвтрээгүй байна");
         return;
       }
 
@@ -157,17 +128,13 @@ export default function ChapterTable({
       );
 
       if (response.error) {
-        toast.error("Failed to update chapter", {
-          description: response.message,
-        });
+        toast.error("Өөрчилж чадсангүй", { description: response.message });
         return;
       }
 
-      const updateLocal = (list: Chapter[]) =>
-        list.map((ch) => (ch.id === chapter.id ? { ...ch, isFree: newIsFree } : ch));
-
-      setChapters((prev) => updateLocal(prev));
-      setFilteredChapters((prev) => updateLocal(prev));
+      setChapters((prev) =>
+        prev.map((ch) => (ch.id === chapter.id ? { ...ch, isFree: newIsFree } : ch))
+      );
 
       toast.success(
         newIsFree
@@ -176,7 +143,7 @@ export default function ChapterTable({
       );
     } catch (error) {
       console.error("Error toggling isFree:", error);
-      toast.error("Failed to update chapter");
+      toast.error("Өөрчилж чадсангүй");
     } finally {
       setTogglingId(null);
     }
@@ -184,154 +151,193 @@ export default function ChapterTable({
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-zinc-900 flex items-center justify-center">
-        <span className="loader"></span>
+      <div className="cyber-bg flex min-h-screen w-full items-center justify-center">
+        <span className="loader relative z-10"></span>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-zinc-900 p-1">
-      <div className="w-full mx-auto px-2">
-        {/* Header */}
-        <div className="mb-6">
-          <div className="flex justify-between items-center">
-            <div>
-              <h1 className="text-3xl font-bold text-white">{mangaTitle}</h1>
-            </div>
-            
-            {/* Search Bar - Centered */}
-            <div className="relative max-w-lg w-96">
-              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-zinc-400 w-4 h-4" />
-              <Input
-                type="text"
-                placeholder="Бүлгийн тоогоор хайх"
-                value={searchQuery}
-                onChange={handleSearch}
-                className="pl-10 bg-zinc-800/50 border-zinc-600/50 text-white placeholder-zinc-400 focus:border-cyan-400 focus:ring-cyan-400 rounded-lg h-10 w-full"
-              />
-            </div>
-            
-            <Button 
-              asChild 
-              className="px-8 py-4 text-lg font-semibold bg-zinc-800 hover:bg-cyan-600 text-white shadow-lg hover:shadow-xl transition-all duration-300 rounded-xl border-0"
+    <div className="cyber-bg min-h-screen w-full p-4 sm:p-6 [&_a]:rounded-[3px] [&_button]:rounded-[3px] [&_.cyber-panel::after]:hidden [&_.cyber-panel::before]:hidden">
+      <div className="relative z-10">
+        {/* Toolbar: доош scroll хийхэд дээр нь тогтоно */}
+        <div className="sticky top-0 z-20 -mx-4 -mt-4 mb-4 flex flex-col gap-3 bg-[#04050a]/90 px-4 py-3 backdrop-blur-md sm:-mx-6 sm:-mt-6 sm:mb-6 sm:px-6 lg:flex-row lg:items-center">
+          <div className="flex min-w-0 items-center gap-3 lg:flex-1">
+            <Link href="/projects" aria-label="Буцах" className="cyber-btn shrink-0 p-2.5">
+              <ArrowLeft className="h-4 w-4" />
+            </Link>
+            <h1 className="font-display min-w-0 truncate text-xl font-bold text-white sm:text-2xl" title={mangaTitle}>
+              {mangaTitle}
+            </h1>
+            <span className="flex shrink-0 items-baseline gap-1.5 border border-[#00f0ff]/50 bg-[#00f0ff]/10 px-3 py-1 shadow-[0_0_14px_rgba(0,240,255,0.25)]">
+              <span className="font-display text-xl font-extrabold leading-none tabular-nums text-[#00f0ff]">
+                {searchQuery.trim() ? `${visible.length}/${chapters.length}` : chapters.length}
+              </span>
+              <span className="text-xs font-medium text-white">бүлэг</span>
+            </span>
+            <Link
+              href={`/projects/edit/${mangaId}`}
+              aria-label="Зурагт ном засах"
+              title="Зурагт ном засах"
+              className="flex h-8 w-8 shrink-0 items-center justify-center border border-white/15 bg-white/[0.03] text-zinc-300 transition-colors hover:border-[#8b6cff]/60 hover:bg-[#8b6cff]/15 hover:text-white"
             >
-              <Link href={`/projects/chapters/${mangaId}/new`}>
-                <Plus className="w-5 h-5 mr-3" />
-                Шинэ бүлэг нэмэх
-              </Link>
-            </Button>
+              <Edit2 className="h-3.5 w-3.5" />
+            </Link>
           </div>
+
+          <div className="relative w-full lg:w-72">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-500" />
+            <input
+              type="text"
+              placeholder="Бүлгийн тоогоор хайх"
+              aria-label="Бүлгийн тоогоор хайх"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full border border-white/10 bg-black/30 py-2 pl-10 pr-9 text-sm text-white placeholder:text-zinc-500 focus:border-[#00f0ff]/60 focus:outline-none focus:ring-1 focus:ring-[#00f0ff]/40"
+            />
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => setSearchQuery("")}
+                aria-label="Хайлт цэвэрлэх"
+                className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-zinc-500 transition-colors hover:text-white"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            )}
+          </div>
+
+          <Link
+            href={`/projects/chapters/${mangaId}/new`}
+            className="cyber-btn flex shrink-0 items-center justify-center gap-2 whitespace-nowrap px-4 py-2 text-sm font-medium"
+            style={{ borderColor: "rgba(0,240,255,0.6)", backgroundColor: "rgba(0,240,255,0.15)" }}
+          >
+            <Plus className="h-4 w-4" />
+            Шинэ бүлэг
+          </Link>
         </div>
 
-        {chapters.length === 0 && (
-          <div className="text-center py-20">
-            <div className="bg-zinc-800/30 backdrop-blur-xl border border-zinc-700/50 rounded-2xl overflow-hidden shadow-2xl p-12">
-              <div className="w-24 h-24 mx-auto mb-6 bg-gradient-to-br from-zinc-700 to-zinc-800 rounded-full flex items-center justify-center">
-                <Plus className="w-12 h-12 text-zinc-400" />
-              </div>
-              <h3 className="text-2xl font-bold text-white mb-4">Одоогоор бүлэг нэмэгдээгүй байна</h3>
-            </div>
+        {loadError ? (
+          <div className="cyber-panel cyber-panel-warn flex flex-col items-center gap-3 px-6 py-16 text-center">
+            <p className="font-display font-semibold text-[#ff2e88]">Бүлгүүд ачаалж чадсангүй</p>
+            <p className="max-w-md text-sm text-zinc-400">{loadError}</p>
+            <button type="button" onClick={loadChapters} className="cyber-btn px-5 py-2 text-sm">
+              Дахин оролдох
+            </button>
           </div>
-        )}
-
-        {filteredChapters.length === 0 && chapters.length > 0 && (
-          <div className="text-center py-12">
-            <div className="bg-zinc-800/30 backdrop-blur-xl border border-zinc-700/50 rounded-2xl overflow-hidden shadow-2xl p-8">
-              <div className="w-16 h-16 mx-auto mb-4 bg-gradient-to-br from-zinc-700 to-zinc-800 rounded-full flex items-center justify-center">
-                <Search className="w-8 h-8 text-zinc-400" />
-              </div>
-              <h3 className="text-xl font-bold text-white mb-2">Бүлэг олдсонгүй</h3>
-              <Button 
-                onClick={() => setSearchQuery("")}
-                className="bg-zinc-800 hover:bg-cyan-600 text-white px-6 py-2 rounded-lg"
+        ) : chapters.length === 0 ? (
+          <div className="cyber-panel flex flex-col items-center justify-center gap-4 px-6 py-20 text-center">
+            <Layers className="h-10 w-10 text-zinc-600" />
+            <p className="text-zinc-300">Одоогоор бүлэг нэмэгдээгүй байна</p>
+          </div>
+        ) : visible.length === 0 ? (
+          <div className="cyber-panel flex flex-col items-center justify-center gap-4 px-6 py-16 text-center">
+            <Search className="h-10 w-10 text-zinc-600" />
+            <p className="text-zinc-300">Бүлэг олдсонгүй</p>
+            <button type="button" onClick={() => setSearchQuery("")} className="cyber-btn px-5 py-2 text-sm">
+              Хайлт цэвэрлэх
+            </button>
+          </div>
+        ) : (
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6">
+            {visible.map((chapter) => (
+              <article
+                key={chapter.id}
+                className="cyber-panel flex flex-col gap-2.5 p-3 transition-colors hover:border-[#00f0ff]/50"
+                style={chapter.isFree ? { borderColor: "rgba(61,220,151,0.35)" } : undefined}
               >
-                Хайлтыг арилгах
-              </Button>
-            </div>
-          </div>
-        )}
-
-        {filteredChapters.length > 0 && (
-          <div className="space-y-2">
-            {filteredChapters.map((chapter, index) => (
-              <Card key={chapter.id} className="bg-zinc-800/30 backdrop-blur-xl border-zinc-700/50 hover:bg-zinc-700/20 transition-all duration-200 shadow-lg h-12">
-                <CardContent className="p-0 h-full">
-                  <div className="flex items-center justify-between w-full h-full px-4">
-                    {/* Chapter Info */}
-                    <div className="flex items-center gap-3">
-                      <h3 className="font-bold text-white text-lg leading-none">
-                        Бүлэг : {chapter.chapterNumber}
-                      </h3>
-                      {chapter.isFree && (
-                        <span className="flex items-center gap-1 text-xs font-medium text-emerald-400 bg-emerald-500/10 border border-emerald-500/30 px-2 py-0.5 rounded-full">
-                          <Gift className="w-3 h-3" />
-                          Үнэгүй
-                        </span>
-                      )}
-                    </div>
-
-                    {/* Actions */}
-                    <div className="flex items-center space-x-2">
-                      {/* isFree toggle */}
-                      <button
-                        type="button"
-                        onClick={() => handleToggleFree(chapter)}
-                        disabled={togglingId === chapter.id}
-                        title="Үнэгүй эсэхийг солих"
-                        className={`relative w-10 h-5.5 rounded-full transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${
-                          chapter.isFree ? "bg-cyan-600" : "bg-zinc-600"
-                        }`}
-                        style={{ width: "2.5rem", height: "1.375rem" }}
-                      >
-                        <span
-                          className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full transition-transform ${
-                            chapter.isFree ? "translate-x-4" : ""
-                          }`}
-                        />
-                      </button>
-
-                      <Button 
-                        asChild 
-                        size="sm" 
-                        className="bg-green-500/20 hover:bg-green-500 text-green-400 hover:text-white border border-green-500/50 hover:border-green-500 transition-all duration-200 rounded-lg cursor-pointer h-8 w-8 p-0 flex items-center justify-center"
-                      >
-                        <Link href={`/projects/chapters/${mangaId}/edit/${chapter.id}`}>
-                          <Edit2 className="w-3 h-3" />
-                        </Link>
-                      </Button>
-                      <Button 
-                        size="sm" 
-                        className="bg-red-500/20 hover:bg-red-500 text-red-400 hover:text-white border border-red-500/50 hover:border-red-500 transition-all duration-200 rounded-lg cursor-pointer h-8 w-8 p-0 flex items-center justify-center"
-                        onClick={() => showDeleteDialog(chapter.id, chapter.chapterNumber)}
-                      >
-                        <Trash2 className="w-3 h-3" />
-                      </Button>
-                    </div>
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex items-baseline gap-1.5">
+                    <span className="font-display text-3xl font-extrabold leading-none tabular-nums text-[#00f0ff] [text-shadow:0_0_14px_rgba(0,240,255,0.5)]">
+                      {chapter.chapterNumber}
+                    </span>
+                    <span className="text-xs font-medium text-zinc-200">бүлэг</span>
                   </div>
-                </CardContent>
-              </Card>
+                  {chapter.isFree && (
+                    <span className="flex items-center gap-1 border border-[#3ddc97]/40 bg-[#3ddc97]/10 px-1.5 py-0.5 text-[10px] font-medium text-[#3ddc97]">
+                      <Gift className="h-3 w-3" />
+                      Үнэгүй
+                    </span>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-1.5">
+                  {/* Үнэгүй эсэх */}
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={chapter.isFree}
+                    aria-label="Үнэгүй"
+                    title="Үнэгүй эсэхийг солих"
+                    onClick={() => handleToggleFree(chapter)}
+                    disabled={togglingId === chapter.id}
+                    className={`relative h-5 w-9 shrink-0 border transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+                      chapter.isFree
+                        ? "border-[#3ddc97]/70 bg-[#3ddc97]/25 shadow-[0_0_10px_rgba(61,220,151,0.35)]"
+                        : "border-white/20 bg-white/5"
+                    }`}
+                  >
+                    <span
+                      className={`absolute top-0.5 h-3.5 w-3.5 transition-all ${
+                        chapter.isFree ? "left-[18px] bg-[#3ddc97]" : "left-0.5 bg-zinc-500"
+                      }`}
+                    />
+                  </button>
+
+                  <Link
+                    href={`/projects/chapters/${mangaId}/edit/${chapter.id}`}
+                    className="flex h-7 flex-1 items-center justify-center gap-1 border border-[#8b6cff]/50 bg-[#8b6cff]/10 text-[11px] font-medium text-[#c4b5ff] transition-colors hover:bg-[#8b6cff]/25 hover:text-white"
+                  >
+                    <Edit2 className="h-3 w-3" />
+                    Засах
+                  </Link>
+
+                  <button
+                    type="button"
+                    onClick={() => showDeleteDialog(chapter.id, chapter.chapterNumber)}
+                    aria-label="Устгах"
+                    title="Устгах"
+                    className="flex h-7 w-7 shrink-0 items-center justify-center border border-[#ff2e88]/40 bg-[#ff2e88]/10 text-[#ff2e88] transition-colors hover:bg-[#ff2e88]/30 hover:text-white"
+                  >
+                    <Trash2 className="h-3 w-3" />
+                  </button>
+                </div>
+              </article>
             ))}
           </div>
         )}
       </div>
 
-      {/* Confirmation Dialog */}
-      <Dialog open={deleteDialog.isOpen} onOpenChange={closeDeleteDialog}>
-        <DialogContent>
+      <Dialog
+        open={deleteDialog.isOpen}
+        onOpenChange={(open) => {
+          if (!open && !deleting) closeDeleteDialog();
+        }}
+      >
+        <DialogContent className="border border-[#ff2e88]/40 bg-[#0b0e1c] text-white">
           <DialogHeader>
-            <DialogTitle>Бүлэг устгах</DialogTitle>
-            <DialogDescription>
-              Та Бүлэг : {deleteDialog.chapterNumber}-ийг устгахдаа итгэлтэй байна уу? Сэргээгдэх боломжгүй
+            <DialogTitle className="font-display">Бүлэг устгах</DialogTitle>
+            <DialogDescription className="text-zinc-400">
+              Бүлэг {deleteDialog.chapterNumber}-ийг устгана. Сэргээх боломжгүй.
             </DialogDescription>
           </DialogHeader>
-          <DialogFooter>
-            <Button className="cursor-pointer" variant="outline" onClick={closeDeleteDialog}>
+          <DialogFooter className="gap-2">
+            <button
+              type="button"
+              onClick={closeDeleteDialog}
+              disabled={deleting}
+              className="cyber-btn rounded-[3px] px-5 py-2 text-sm"
+            >
               Цуцлах
-            </Button>
-            <Button className="cursor-pointer" variant="destructive" onClick={handleDelete}>
-              Устгах
-            </Button>
+            </button>
+            <button
+              type="button"
+              onClick={handleDelete}
+              disabled={deleting}
+              className="rounded-[3px] border border-[#ff2e88]/70 bg-[#ff2e88]/25 px-5 py-2 text-sm font-medium text-white transition-colors hover:bg-[#ff2e88]/45 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {deleting ? "Устгаж байна..." : "Устгах"}
+            </button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

@@ -1,7 +1,7 @@
 // [АДМИН САЙТ] app/user-profile/page.tsx
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import {
   Upload,
   Trash2,
@@ -15,7 +15,6 @@ import {
   Check,
 } from "lucide-react";
 import { toast } from "sonner";
-import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
 interface ProfileImage {
@@ -37,8 +36,8 @@ const MAX_FILE_SIZE = 5 * 1024 * 1024;
 const MAX_QUEUE = 20;
 
 const SECTIONS = [
-  { key: "avatars", label: "Профайл зураг", icon: UserCircle, ready: true },
-  { key: "borders", label: "Профайл хүрээ", icon: Frame, ready: false },
+  { key: "avatars", label: "Профайл зураг", icon: UserCircle, ready: true, accent: "#00f0ff" },
+  { key: "borders", label: "Профайл хүрээ", icon: Frame, ready: false, accent: "#ff2e88" },
 ] as const;
 
 type SectionKey = (typeof SECTIONS)[number]["key"];
@@ -55,6 +54,7 @@ function AvatarSection() {
   const [dragOver, setDragOver] = useState(false);
   const [confirmId, setConfirmId] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [filter, setFilter] = useState<"all" | "active" | "hidden">("all");
 
   queueRef.current = queue;
 
@@ -221,32 +221,20 @@ function AvatarSection() {
   };
 
   const activeCount = images.filter((image) => image.active).length;
+  const visibleImages = images.filter((image) =>
+    filter === "all" ? true : filter === "active" ? image.active : !image.active
+  );
+
+  const stats = [
+    { label: "Нийт зураг", value: images.length, color: "#8b6cff" },
+    { label: "Идэвхтэй", value: activeCount, color: "#00f0ff" },
+    { label: "Нуусан", value: images.length - activeCount, color: "#ff2e88" },
+  ];
 
   return (
-    <div className="space-y-6">
-      <div className="grid grid-cols-3 gap-3">
-        {[
-          { label: "Нийт зураг", value: images.length },
-          { label: "Идэвхтэй", value: activeCount },
-          { label: "Нуусан", value: images.length - activeCount },
-        ].map((stat) => (
-          <div key={stat.label} className="rounded-xl border border-zinc-800 bg-zinc-900 px-4 py-3">
-            <p className="text-xs text-zinc-400">{stat.label}</p>
-            <p className="mt-1 text-2xl font-bold text-white">{stat.value}</p>
-          </div>
-        ))}
-      </div>
-
-      <div className="rounded-xl border border-zinc-800 bg-zinc-900 p-4 sm:p-5">
-        <div className="mb-4 flex items-center justify-between gap-3">
-          <div>
-            <h2 className="text-base font-semibold text-white">Шинэ зураг хуулах</h2>
-            <p className="text-xs text-zinc-400">
-              Зураг автоматаар 512x512 дөрвөлжин болж WebP хэлбэрээр хадгалагдана. GIF бол хөрвүүлэлтгүй, анимацтайгаа хэвээр хадгалагдана. Хамгийн ихдээ 5MB.
-            </p>
-          </div>
-        </div>
-
+    <div className="grid min-h-0 flex-1 grid-cols-1 gap-6 lg:grid-cols-[minmax(300px,380px)_minmax(0,1fr)] lg:grid-rows-1">
+      {/* Зүүн: хуулах хэсэг */}
+      <section className="cyber-panel flex min-h-[360px] flex-col gap-4 p-4 lg:min-h-0">
         <input
           ref={fileInputRef}
           type="file"
@@ -262,9 +250,13 @@ function AvatarSection() {
         <div
           role="button"
           tabIndex={0}
+          aria-label="Зураг сонгох"
           onClick={() => fileInputRef.current?.click()}
           onKeyDown={(e) => {
-            if (e.key === "Enter" || e.key === " ") fileInputRef.current?.click();
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              fileInputRef.current?.click();
+            }
           }}
           onDragOver={(e) => {
             e.preventDefault();
@@ -277,42 +269,48 @@ function AvatarSection() {
             addFiles(e.dataTransfer.files);
           }}
           className={cn(
-            "flex cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed px-4 py-8 text-center transition-colors",
+            "flex min-h-[180px] flex-1 cursor-pointer flex-col items-center justify-center gap-3 border border-dashed px-4 py-8 text-center transition-all focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#00f0ff]",
             dragOver
-              ? "border-cyan-400 bg-cyan-500/10"
-              : "border-zinc-700 bg-zinc-800/40 hover:border-cyan-500/60 hover:bg-zinc-800/70"
+              ? "border-[#00f0ff] bg-[#00f0ff]/10 shadow-[0_0_28px_rgba(0,240,255,0.25)]"
+              : "border-[#00f0ff]/30 bg-black/20 hover:border-[#00f0ff]/70 hover:bg-[#00f0ff]/5"
           )}
         >
-          <Upload className="h-8 w-8 text-zinc-400" />
-          <p className="text-sm text-white">Зургаа энд чирж оруулах эсвэл дарж сонгох</p>
-          <p className="text-xs text-zinc-500">Олон зургийг нэг дор сонгож болно</p>
+          <Upload
+            className="h-10 w-10 text-[#00f0ff]"
+            style={{ filter: "drop-shadow(0 0 8px rgba(0,240,255,0.6))" }}
+          />
+          <p className="text-sm text-white">Зураг чирж оруулах эсвэл дарж сонгох</p>
+          <p className="text-xs text-zinc-500">5MB хүртэл</p>
         </div>
 
         {queue.length > 0 && (
-          <div className="mt-4 space-y-3">
+          <div className="shrink-0 space-y-3">
             <div className="flex items-center justify-between">
-              <p className="text-sm text-zinc-300">Хуулахад бэлэн: {queue.length} зураг</p>
+              <p className="font-display text-sm font-semibold text-white">{queue.length} зураг</p>
               {!uploading && (
                 <button
                   type="button"
                   onClick={clearQueue}
-                  className="cursor-pointer text-xs text-zinc-400 transition-colors hover:text-white"
+                  className="text-xs text-zinc-400 transition-colors hover:text-[#ff2e88]"
                 >
-                  Бүгдийг цэвэрлэх
+                  Цэвэрлэх
                 </button>
               )}
             </div>
 
-            <div className="grid grid-cols-4 gap-3 sm:grid-cols-6 lg:grid-cols-8">
+            <div className="cyber-scroll grid max-h-44 grid-cols-5 gap-2 overflow-y-auto pr-1">
               {queue.map((item) => (
-                <div key={item.id} className="relative aspect-square overflow-hidden rounded-full border border-zinc-700">
-                  <img src={item.preview} alt={item.file.name} className="h-full w-full object-cover" />
+                <div
+                  key={item.id}
+                  className="relative aspect-square overflow-hidden rounded-full border border-[#00f0ff]/30"
+                >
+                  <img src={item.preview} alt="" className="h-full w-full object-cover" />
                   {!uploading && (
                     <button
                       type="button"
                       aria-label="Хасах"
                       onClick={() => removeFromQueue(item.id)}
-                      className="absolute right-1 top-1 flex h-5 w-5 cursor-pointer items-center justify-center rounded-full bg-black/70 text-white transition-colors hover:bg-red-500"
+                      className="absolute right-0.5 top-0.5 flex h-5 w-5 items-center justify-center rounded-full bg-black/80 text-white transition-colors hover:bg-[#ff2e88]"
                     >
                       <X className="h-3 w-3" />
                     </button>
@@ -321,154 +319,202 @@ function AvatarSection() {
               ))}
             </div>
 
-            <div className="flex items-center gap-3">
-              <Button
-                onClick={uploadAll}
-                disabled={uploading}
-                className="cursor-pointer bg-cyan-600 text-white hover:bg-cyan-700"
-              >
-                {uploading ? (
-                  <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    Хуулж байна {progress.done}/{progress.total}
-                  </>
-                ) : (
-                  <>
-                    <Upload className="mr-2 h-4 w-4" />
-                    Хуулах ({queue.length})
-                  </>
-                )}
-              </Button>
-              {uploading && (
-                <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-zinc-800">
-                  <div
-                    className="h-full bg-cyan-500 transition-all"
-                    style={{ width: `${progress.total ? (progress.done / progress.total) * 100 : 0}%` }}
-                  />
-                </div>
+            <button
+              type="button"
+              onClick={uploadAll}
+              disabled={uploading}
+              className="cyber-btn flex w-full items-center justify-center gap-2 px-4 py-2.5 text-sm font-medium"
+              style={{
+                borderColor: "rgba(0,240,255,0.6)",
+                backgroundColor: "rgba(0,240,255,0.15)",
+              }}
+            >
+              {uploading ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Хуулж байна {progress.done}/{progress.total}
+                </>
+              ) : (
+                <>
+                  <Upload className="h-4 w-4" />
+                  Хуулах ({queue.length})
+                </>
               )}
-            </div>
+            </button>
+
+            {uploading && (
+              <div className="h-1 w-full overflow-hidden bg-white/10">
+                <div
+                  className="h-full bg-[#00f0ff] shadow-[0_0_10px_#00f0ff] transition-all"
+                  style={{ width: `${progress.total ? (progress.done / progress.total) * 100 : 0}%` }}
+                />
+              </div>
+            )}
           </div>
         )}
-      </div>
+      </section>
 
-      <div className="rounded-xl border border-zinc-800 bg-zinc-900 p-4 sm:p-5">
-        <div className="mb-4 flex items-center justify-between">
-          <h2 className="text-base font-semibold text-white">Хуулсан зургууд</h2>
-          <span className="rounded-md border border-zinc-700 bg-zinc-800 px-2 py-0.5 text-xs text-zinc-300">
-            {images.length}
-          </span>
+      {/* Баруун: статистик + хуулсан зургууд */}
+      <div className="flex min-h-0 flex-col gap-4">
+        <div className="grid shrink-0 grid-cols-3 gap-3">
+          {stats.map((stat) => (
+            <div
+              key={stat.label}
+              className="cyber-panel cyber-stat px-4 py-3"
+              style={{ "--accent": stat.color } as CSSProperties}
+            >
+              <p className="text-xs text-zinc-400">{stat.label}</p>
+              <p className="cyber-glow font-display mt-1 text-3xl font-bold tabular-nums">{stat.value}</p>
+            </div>
+          ))}
         </div>
 
-        {loading ? (
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6">
-            {Array.from({ length: 6 }).map((_, i) => (
-              <div key={i} className="h-44 animate-pulse rounded-xl bg-zinc-800" />
-            ))}
-          </div>
-        ) : images.length === 0 ? (
-          <div className="flex flex-col items-center justify-center gap-2 py-12 text-zinc-500">
-            <ImageOff className="h-10 w-10 opacity-60" />
-            <p className="text-sm text-zinc-300">Одоогоор профайл зураг хуулаагүй байна</p>
-            <p className="text-xs">Дээрх хэсгээс зураг хуулна уу</p>
-          </div>
-        ) : (
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6">
-            {images.map((image) => {
-              const isBusy = busyId === image.id;
-              const isConfirming = confirmId === image.id;
-
-              return (
-                <div
-                  key={image.id}
-                  className="flex flex-col items-center gap-2 rounded-xl border border-zinc-800 bg-zinc-950/60 p-3"
-                >
-                  <div className="relative">
-                    <img
-                      src={image.url}
-                      alt={image.name}
-                      loading="lazy"
-                      className={cn(
-                        "h-20 w-20 rounded-full object-cover ring-2 transition-opacity sm:h-24 sm:w-24",
-                        image.active ? "ring-cyan-500/60" : "opacity-40 ring-zinc-700"
-                      )}
-                    />
-                    {!image.active && (
-                      <span className="absolute inset-0 flex items-center justify-center">
-                        <EyeOff className="h-5 w-5 text-zinc-300" />
-                      </span>
+        <section className="cyber-panel flex min-h-[420px] max-h-[75vh] flex-1 flex-col lg:max-h-none lg:min-h-0">
+          <div className="flex shrink-0 items-center border-b border-white/5 p-3">
+            <div role="group" aria-label="Шүүлтүүр" className="flex gap-1 border border-white/10 bg-black/30 p-1">
+              {(
+                [
+                  { key: "all", label: "Бүгд", count: images.length },
+                  { key: "active", label: "Идэвхтэй", count: activeCount },
+                  { key: "hidden", label: "Нуусан", count: images.length - activeCount },
+                ] as const
+              ).map((option) => {
+                const isOn = filter === option.key;
+                return (
+                  <button
+                    key={option.key}
+                    type="button"
+                    aria-pressed={isOn}
+                    onClick={() => setFilter(option.key)}
+                    className={cn(
+                      "flex items-center gap-2 px-3 py-1.5 text-sm font-medium transition-colors",
+                      isOn
+                        ? "bg-[#00f0ff]/20 text-[#00f0ff] shadow-[0_0_12px_rgba(0,240,255,0.25)]"
+                        : "text-zinc-400 hover:bg-white/5 hover:text-white"
                     )}
-                  </div>
-
-                  <div className="w-full text-center">
-                    <p className="font-mono text-xs font-bold text-cyan-400">#{image.id}</p>
-                    <p className="truncate text-xs font-medium text-white" title={image.name}>
-                      {image.name || "Нэргүй"}
-                    </p>
-                    <p className="font-mono text-[11px] text-zinc-500">
-                      {image.createdAt > 0 ? new Date(image.createdAt).toISOString().slice(0, 10) : "-"}
-                    </p>
-                  </div>
-
-                  {isConfirming ? (
-                    <div className="flex w-full items-center gap-1.5">
-                      <Button
-                        size="sm"
-                        disabled={isBusy}
-                        onClick={() => deleteImage(image)}
-                        className="h-8 flex-1 cursor-pointer bg-red-600 text-xs text-white hover:bg-red-700"
-                      >
-                        {isBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="mr-1 h-3.5 w-3.5" />}
-                        Тийм
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        disabled={isBusy}
-                        onClick={() => setConfirmId(null)}
-                        className="h-8 flex-1 cursor-pointer border-zinc-700 bg-transparent text-xs text-zinc-300 hover:bg-zinc-800"
-                      >
-                        Үгүй
-                      </Button>
-                    </div>
-                  ) : (
-                    <div className="flex w-full items-center gap-1.5">
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        disabled={isBusy}
-                        onClick={() => toggleActive(image)}
-                        className="h-8 flex-1 cursor-pointer border-zinc-700 bg-transparent text-xs text-zinc-200 hover:bg-zinc-800"
-                      >
-                        {image.active ? (
-                          <>
-                            <Eye className="mr-1 h-3.5 w-3.5" />
-                            Идэвхтэй
-                          </>
-                        ) : (
-                          <>
-                            <EyeOff className="mr-1 h-3.5 w-3.5" />
-                            Нуусан
-                          </>
-                        )}
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        disabled={isBusy}
-                        aria-label="Устгах"
-                        onClick={() => setConfirmId(image.id)}
-                        className="h-8 w-8 cursor-pointer border-zinc-700 bg-transparent p-0 text-red-400 hover:bg-red-500/10 hover:text-red-300"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </Button>
-                    </div>
-                  )}
-                </div>
-              );
-            })}
+                  >
+                    {option.label}
+                    <span className="font-display text-xs tabular-nums opacity-70">{option.count}</span>
+                  </button>
+                );
+              })}
+            </div>
           </div>
-        )}
+
+          <div className="cyber-scroll min-h-0 flex-1 overflow-y-auto p-4">
+            {loading ? (
+              <div className="grid grid-cols-[repeat(auto-fill,minmax(124px,1fr))] gap-2">
+                {Array.from({ length: 18 }).map((_, i) => (
+                  <div key={i} className="h-36 animate-pulse bg-white/5" />
+                ))}
+              </div>
+            ) : images.length === 0 ? (
+              <div className="flex h-full min-h-[240px] flex-col items-center justify-center gap-3 text-zinc-500">
+                <ImageOff className="h-10 w-10 opacity-60" />
+                <p className="text-sm text-zinc-300">Зураг хуулаагүй байна</p>
+              </div>
+            ) : visibleImages.length === 0 ? (
+              <div className="flex h-full min-h-[240px] flex-col items-center justify-center gap-3 text-zinc-500">
+                <ImageOff className="h-10 w-10 opacity-60" />
+                <p className="text-sm text-zinc-300">Илэрц олдсонгүй</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-[repeat(auto-fill,minmax(124px,1fr))] gap-2">
+                {visibleImages.map((image) => {
+                  const isBusy = busyId === image.id;
+                  const isConfirming = confirmId === image.id;
+
+                  return (
+                    <div
+                      key={image.id}
+                      className="flex flex-col items-center gap-1.5 border border-white/10 bg-white/[0.02] p-2 transition-colors hover:border-[#00f0ff]/40"
+                    >
+                      <div className="relative">
+                        <img
+                          src={image.url}
+                          alt={`#${image.id}`}
+                          loading="lazy"
+                          className={cn(
+                            "h-16 w-16 rounded-full object-cover ring-2 transition-all sm:h-20 sm:w-20",
+                            image.active
+                              ? "ring-[#00f0ff]/70 shadow-[0_0_14px_rgba(0,240,255,0.3)]"
+                              : "opacity-40 ring-white/20"
+                          )}
+                        />
+                        {!image.active && (
+                          <span className="absolute inset-0 flex items-center justify-center">
+                            <EyeOff className="h-4 w-4 text-zinc-300" />
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="w-full text-center leading-tight">
+                        <p className="font-display text-xs font-bold text-[#00f0ff]">#{image.id}</p>
+                        <p className="font-mono text-[10px] text-zinc-500">
+                          {image.createdAt > 0 ? new Date(image.createdAt).toISOString().slice(0, 10) : "-"}
+                        </p>
+                      </div>
+
+                      {isConfirming ? (
+                        <div className="flex w-full items-center gap-1">
+                          <button
+                            type="button"
+                            disabled={isBusy}
+                            onClick={() => deleteImage(image)}
+                            className="flex h-7 flex-1 items-center justify-center gap-0.5 border border-[#ff2e88]/70 bg-[#ff2e88]/25 text-[11px] text-white transition-colors hover:bg-[#ff2e88]/45 disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            {isBusy ? (
+                              <Loader2 className="h-3 w-3 animate-spin" />
+                            ) : (
+                              <Check className="h-3 w-3" />
+                            )}
+                            Тийм
+                          </button>
+                          <button
+                            type="button"
+                            disabled={isBusy}
+                            onClick={() => setConfirmId(null)}
+                            className="h-7 flex-1 border border-white/15 bg-transparent text-[11px] text-zinc-300 transition-colors hover:bg-white/5 disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            Үгүй
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="flex w-full items-center gap-1">
+                          <button
+                            type="button"
+                            disabled={isBusy}
+                            onClick={() => toggleActive(image)}
+                            aria-label={image.active ? "Нуух" : "Идэвхжүүлэх"}
+                            title={image.active ? "Идэвхтэй (нуухын тулд дарна)" : "Нуусан (идэвхжүүлэхийн тулд дарна)"}
+                            className={cn(
+                              "flex h-7 flex-1 items-center justify-center transition-colors disabled:cursor-not-allowed disabled:opacity-50",
+                              image.active
+                                ? "cyber-btn"
+                                : "border border-white/15 bg-white/[0.03] text-zinc-400 hover:text-white"
+                            )}
+                          >
+                            {image.active ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5" />}
+                          </button>
+                          <button
+                            type="button"
+                            disabled={isBusy}
+                            aria-label="Устгах"
+                            title="Устгах"
+                            onClick={() => setConfirmId(image.id)}
+                            className="flex h-7 flex-1 items-center justify-center border border-[#ff2e88]/40 bg-[#ff2e88]/10 text-[#ff2e88] transition-colors hover:bg-[#ff2e88]/30 hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </section>
       </div>
     </div>
   );
@@ -476,12 +522,10 @@ function AvatarSection() {
 
 function ComingSoon({ title }: { title: string }) {
   return (
-    <div className="flex flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-zinc-700 bg-zinc-900/60 px-4 py-20 text-center">
-      <Frame className="h-10 w-10 text-zinc-600" />
-      <p className="text-base font-semibold text-white">{title}</p>
-      <p className="max-w-sm text-sm text-zinc-400">
-        Энэ хэсэг удахгүй нэмэгдэнэ. Профайл зургийн хүрээг (border) эндээс хуулдаг болно.
-      </p>
+    <div className="cyber-panel cyber-panel-warn flex min-h-[320px] flex-1 flex-col items-center justify-center gap-3 px-4 text-center">
+      <Frame className="h-10 w-10 text-[#ff2e88]" style={{ filter: "drop-shadow(0 0 8px rgba(255,46,136,0.6))" }} />
+      <p className="font-display text-lg font-semibold text-white">{title}</p>
+      <p className="text-sm text-zinc-500">Удахгүй</p>
     </div>
   );
 }
@@ -491,39 +535,49 @@ export default function UserProfilePage() {
   const current = SECTIONS.find((item) => item.key === section)!;
 
   return (
-    <div className="space-y-6 p-4 sm:p-6">
-      <div>
-        <h1 className="text-2xl font-bold text-white">Хэрэглэгчийн профайл</h1>
-        <p className="mt-1 text-sm text-zinc-400">
-          Хэрэглэгчид профайлдаа сонгож ашиглах зүйлсийг эндээс удирдана.
-        </p>
-      </div>
+    // Desktop дээр хуудас дэлгэцэнд багтаж, card дотроо scroll хийнэ
+    <div className="cyber-bg flex min-h-screen w-full flex-col p-4 sm:p-6 lg:h-screen">
+      <div className="relative z-10 flex min-h-0 flex-1 flex-col gap-6">
+        {/* Табууд (Client удирдлагатай ижил) */}
+        <div
+          role="tablist"
+          aria-label="Хэрэглэгчийн профайл"
+          className="flex shrink-0 gap-2 overflow-x-auto pb-1"
+        >
+          {SECTIONS.map((item) => {
+            const Icon = item.icon;
+            const isActive = section === item.key;
 
-      <div className="inline-flex flex-wrap gap-1 rounded-xl border border-zinc-800 bg-zinc-900 p-1">
-        {SECTIONS.map((item) => {
-          const Icon = item.icon;
-          const isActive = section === item.key;
-          return (
-            <button
-              key={item.key}
-              type="button"
-              onClick={() => setSection(item.key)}
-              className={cn(
-                "flex cursor-pointer items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-colors",
-                isActive ? "bg-cyan-600 text-white" : "text-zinc-400 hover:bg-zinc-800 hover:text-white"
-              )}
-            >
-              <Icon className="h-4 w-4" />
-              {item.label}
-              {!item.ready && (
-                <span className="rounded bg-zinc-700 px-1.5 py-0.5 text-[10px] text-zinc-300">Удахгүй</span>
-              )}
-            </button>
-          );
-        })}
-      </div>
+            return (
+              <button
+                key={item.key}
+                type="button"
+                role="tab"
+                aria-selected={isActive}
+                onClick={() => setSection(item.key)}
+                className={`relative flex shrink-0 items-center gap-3 border px-5 py-3 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#00f0ff] ${
+                  isActive ? "text-white" : "border-white/10 text-zinc-400 hover:border-white/25 hover:text-white"
+                }`}
+                style={
+                  isActive
+                    ? {
+                        borderColor: `${item.accent}99`,
+                        backgroundColor: `${item.accent}14`,
+                        boxShadow: `0 0 20px ${item.accent}26`,
+                      }
+                    : undefined
+                }
+              >
+                <Icon className="h-4 w-4" style={{ color: isActive ? item.accent : undefined }} />
+                <span>{item.label}</span>
+                {!item.ready && <span className="text-xs text-[#ffd23f]">Удахгүй</span>}
+              </button>
+            );
+          })}
+        </div>
 
-      {current.ready ? <AvatarSection /> : <ComingSoon title={current.label} />}
+        {current.ready ? <AvatarSection /> : <ComingSoon title={current.label} />}
+      </div>
     </div>
   );
 }

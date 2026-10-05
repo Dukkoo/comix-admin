@@ -1,6 +1,7 @@
 // app/api/admin/users/route.ts
 import { auth, firestore } from "@/firebase/server";
 import { NextRequest, NextResponse } from "next/server";
+import { requireAdmin } from "@/lib/admin-auth";
 
 interface UserData {
   id: string;
@@ -15,168 +16,346 @@ interface UserData {
   lastLogin?: any;
 }
 
-// Helper function to generate unique 5-digit userId
-async function generateUniqueUserId(): Promise<number> {
-  const min = 10000;
-  const max = 99999;
-  
-  let attempts = 0;
-  const maxAttempts = 50;
-  
-  while (attempts < maxAttempts) {
-    const userId = Math.floor(Math.random() * (max - min + 1)) + min;
-    
-    const existingUser = await firestore
-      .collection("users")
-      .where("userId", "==", userId)
-      .limit(1)
-      .get();
-    
-    if (existingUser.empty) {
-      return userId;
+type Doc = FirebaseFirestore.QueryDocumentSnapshot;
+type Query = FirebaseFirestore.Query;
+
+const SEARCH_LIMIT = 100; // хайлтаар хамгийн ихдээ хэдэн үр дүн авах
+const MAX_SEARCH_LENGTH = 100;
+const MAX_SUBSCRIPTION_DAYS = 3650; // 10 жил
+const MAX_XP = 1_000_000_000;
+const MIN_USER_ID = 10000;
+const DAY_MS = 24 * 60 * 60 * 1000;
+const VALID_STATUSES = ["all", "subscribed", "not_subscribed"];
+
+const json = (body: unknown, status = 200) =>
+  NextResponse.json(body, { status, headers: { "Cache-Control": "no-store" } });
+
+// ========================================
+// ИДЭВХТЭЙ ЭРХИЙН ЯГ ТОДОРХОЙЛОЛТ
+// ========================================
+// Хэрэглэгч "идэвхтэй" гэдэг нь: subscriptionStatus == "subscribed" БӨГӨӨД
+// subscriptionEndDate > одоо. Dashboard-ын (analytics) тоотой яг ижил.
+// Жагсаалтын шүүлтүүр, нийт тоо, мөр бүрийн төлөв гурвуулаа энэ дүрмээр тооцогдоно.
+const isEffectivelySubscribed = (data: FirebaseFirestore.DocumentData, nowMs: number) => {
+  if (data.subscriptionStatus !== "subscribed" || !data.subscriptionEndDate) return false;
+  const endMs = Date.parse(data.subscriptionEndDate);
+  return !isNaN(endMs) && endMs > nowMs;
+};
+
+// ========================================
+// Хуудаслалтын туслахууд
+// ========================================
+const countOf = async (query: Query) => (await query.count().get()).data().count;
+
+const applyPage = (query: Query, limit: number, offset: number) => {
+  let q = query.limit(limit);
+  if (offset > 0) q = q.offset(offset);
+  return q;
+};
+
+// orderBy("createdAt") нь createdAt талбаргүй хэрэглэгчийг жагсаалтаас ГАРГАДАГ.
+// Тиймээс эрэмбэлсэн тоо нийт тоотой тэнцүү үед л эрэмбэлнэ.
+// Composite index байхгүй бол эрэмбэгүй (document ID-аар) буцаана.
+async function fetchPage(base: Query, total: number, limit: number, offset: number): Promise<Doc[]> {
+  let useOrder = false;
+  try {
+    const orderedCount = await countOf(base.orderBy("createdAt", "desc"));
+    useOrder = orderedCount === total;
+    if (!useOrder) {
+      console.warn(
+        `[admin/users] ${total - orderedCount} хэрэглэгчид createdAt талбар байхгүй тул эрэмбэгүй жагсаалт ашиглаж байна`
+      );
     }
-    
-    attempts++;
+  } catch (error: any) {
+    console.warn("[admin/users] createdAt эрэмбэ ашиглах боломжгүй (index байхгүй байж магадгүй):", error?.message);
   }
-  
-  throw new Error("Could not generate unique userId");
+
+  const query = useOrder ? base.orderBy("createdAt", "desc") : base;
+  const snapshot = await applyPage(query, limit, offset).get();
+  return snapshot.docs;
 }
 
+// ========================================
+// userId (5+ оронтой) хуваарилалт
+// ========================================
+// Өмнөх санамсаргүй сонголт нь 90,000 хэрэглэгчээс хойш бүтэлгүйтэх, мөн хоёр хүсэлт
+// зэрэг ирвэл ижил ID өгөх эрсдэлтэй байв. Одоо `counters/users` дахь тоолуурыг
+// transaction дотор нэмэгдүүлнэ. Анх удаа ажиллахад одоо байгаа хамгийн их userId-аас
+// үргэлжилнэ. Мөн client талын сайт санамсаргүй ID өгдөг тул давхцахгүйг шалгана.
+async function allocateUserId(
+  tx: FirebaseFirestore.Transaction,
+  counterRef: FirebaseFirestore.DocumentReference
+): Promise<number> {
+  const usersRef = firestore.collection("users");
+
+  const counterSnap = await tx.get(counterRef);
+  const saved = counterSnap.exists ? Number(counterSnap.data()?.lastUserId) : NaN;
+
+  let last: number;
+  if (Number.isFinite(saved)) {
+    last = saved;
+  } else {
+    const top = await tx.get(usersRef.orderBy("userId", "desc").limit(1));
+    const topId = top.empty ? NaN : Number(top.docs[0].data().userId);
+    last = Number.isFinite(topId) ? Math.max(topId, MIN_USER_ID - 1) : MIN_USER_ID - 1;
+  }
+
+  let candidate = last + 1;
+  for (let attempt = 0; attempt < 20; attempt++) {
+    const clash = await tx.get(usersRef.where("userId", "==", candidate).limit(1));
+    if (clash.empty) break;
+    candidate += 1;
+  }
+
+  tx.set(counterRef, { lastUserId: candidate });
+  return candidate;
+}
+
+// ========================================
+// Эрх сунгах / багасгах тооцоо (өмнөх логик хэвээр)
+// ========================================
+const cancelSubscription = () => ({
+  subscriptionStatus: "not_subscribed",
+  subscriptionEndDate: null,
+  subscriptionStartDate: null,
+});
+
+const addDays = (base: Date, days: number) => {
+  const d = new Date(base);
+  d.setDate(d.getDate() + days);
+  return d;
+};
+
+function computeSubscriptionUpdate(
+  days: number,
+  mode: "set" | "add",
+  current: FirebaseFirestore.DocumentData,
+  now: Date
+): Record<string, unknown> {
+  // 0 = цуцлах
+  if (days === 0) return cancelSubscription();
+
+  // set: одооноос эхлээд яг N хоног
+  if (mode === "set") {
+    return {
+      subscriptionStatus: "subscribed",
+      subscriptionEndDate: addDays(now, days).toISOString(),
+      subscriptionStartDate: now.toISOString(),
+    };
+  }
+
+  // add + эерэг: одоо байгаа эрх дуусаагүй бол түүн дээр нь нэмнэ
+  if (days > 0) {
+    let base = now;
+    if (current.subscriptionStatus === "subscribed" && current.subscriptionEndDate) {
+      const currentEnd = new Date(current.subscriptionEndDate);
+      if (!isNaN(currentEnd.getTime()) && currentEnd > now) base = currentEnd;
+    }
+
+    const update: Record<string, unknown> = {
+      subscriptionStatus: "subscribed",
+      subscriptionEndDate: addDays(base, days).toISOString(),
+    };
+    if (!current.subscriptionStartDate || current.subscriptionStatus !== "subscribed") {
+      update.subscriptionStartDate = now.toISOString();
+    }
+    return update;
+  }
+
+  // add + сөрөг: одоо байгаа эрхээс хасна
+  if (current.subscriptionEndDate) {
+    const end = addDays(new Date(current.subscriptionEndDate), days);
+    if (isNaN(end.getTime()) || end <= now) return cancelSubscription();
+    return {
+      subscriptionStatus: "subscribed",
+      subscriptionEndDate: end.toISOString(),
+    };
+  }
+  return cancelSubscription();
+}
+
+const toNumber = (value: unknown): number | undefined => {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value === "number") return value;
+  if (typeof value === "string" && value.trim() !== "") return Number(value);
+  return NaN;
+};
+
+// ========================================
+// Хайлт
+// ========================================
+// Firestore-д "contains" хайлт байхгүй тул prefix (эхлэлээр) хайна
+const prefixQuery = (field: string, value: string) =>
+  firestore
+    .collection("users")
+    .where(field, ">=", value)
+    .where(field, "<=", value + "\uf8ff")
+    .limit(SEARCH_LIMIT);
+
+async function searchUsers(term: string, searchType: string): Promise<Doc[]> {
+  const users = firestore.collection("users");
+
+  // 1) ID-аар (яг таарах)
+  if (searchType === "userId" || /^\d+$/.test(term)) {
+    const snap = await users
+      .where("userId", "==", parseInt(term, 10))
+      .limit(SEARCH_LIMIT)
+      .get();
+    return snap.docs;
+  }
+
+  // 2) Цахим шуудангаар (эхлэлээр, жижиг үсгээр)
+  if (searchType === "email" || term.includes("@")) {
+    const snap = await prefixQuery("email", term.toLowerCase()).get();
+    return snap.docs;
+  }
+
+  // 3) Нэрээр: username эхлэлээр + цахим шууданг эхлэлээр нь зэрэг хайж нэгтгэнэ
+  const [byUsername, byEmail] = await Promise.all([
+    prefixQuery("username", term).get(),
+    prefixQuery("email", term.toLowerCase()).get(),
+  ]);
+
+  const merged = new Map<string, Doc>();
+  [...byUsername.docs, ...byEmail.docs].forEach((doc) => merged.set(doc.id, doc));
+  return Array.from(merged.values());
+}
+
+// ========================================
+// GET
+// ========================================
 export async function GET(request: NextRequest) {
   try {
-    const authHeader = request.headers.get("authorization");
-    if (!authHeader?.startsWith("Bearer ")) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
-    const token = authHeader.split(" ")[1];
-    const verifiedToken = await auth.verifyIdToken(token);
-
-    if (!verifiedToken.admin) {
-      return NextResponse.json({ error: "Admin access required" }, { status: 403 });
-    }
+    const admin = await requireAdmin(request);
+    if (!admin.ok) return admin.response;
 
     const { searchParams } = new URL(request.url);
-    const page = parseInt(searchParams.get("page") || "1");
-    const limit = parseInt(searchParams.get("limit") || "25");
-    const search = searchParams.get("search")?.trim() || "";
+    const page = Math.max(1, parseInt(searchParams.get("page") || "1") || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(searchParams.get("limit") || "25") || 25));
+    const search = (searchParams.get("search")?.trim() || "").slice(0, MAX_SEARCH_LENGTH);
     const searchType = searchParams.get("searchType") || "";
     const status = searchParams.get("status") || "all";
-
-    // ========================================
-    // BUILD QUERY
-    // ========================================
-    
-    let query: FirebaseFirestore.Query = firestore.collection("users");
-    let isSearchQuery = false;
-
-    // Status filter
-    if (status !== "all") {
-      query = query.where("subscriptionStatus", "==", status);
-    }
-
-    // ========================================
-    // SEARCH - Exact match (1-2 reads only!)
-    // ========================================
-    
-    if (search) {
-      isSearchQuery = true;
-      
-      // UserId exact match
-      if (searchType === "userId" || /^\d+$/.test(search)) {
-        const userIdNum = parseInt(search);
-        query = query.where("userId", "==", userIdNum);
-      }
-      // Email exact match
-      else if (searchType === "email" || search.includes("@")) {
-        query = query.where("email", "==", search.toLowerCase());
-      }
-      // Default: treat as email if contains text
-      else {
-        query = query.where("email", "==", search.toLowerCase());
-      }
-    }
-
-    // Default sort (only when not searching)
-    if (!isSearchQuery) {
-      query = query.orderBy("createdAt", "desc");
-    }
-
-    // ========================================
-    // COUNT (1 read)
-    // ========================================
-    
-    const countSnapshot = await query.count().get();
-    const totalCount = countSnapshot.data().count;
-    const totalPages = Math.ceil(totalCount / limit);
-
-    // ========================================
-    // PAGINATION (25 reads max)
-    // ========================================
-    
     const offset = (page - 1) * limit;
-    let paginatedQuery = query.limit(limit);
-    
-    if (offset > 0 && !isSearchQuery) {
-      paginatedQuery = paginatedQuery.offset(offset);
+
+    if (!VALID_STATUSES.includes(status)) {
+      return json({ error: "Invalid status" }, 400);
     }
 
-    const snapshot = await paginatedQuery.get();
-    const userDocs = snapshot.docs;
+    const nowMs = Date.now();
+    const nowIso = new Date(nowMs).toISOString();
+    const usersCol = firestore.collection("users");
+
+    let docs: Doc[];
+    let totalCount: number;
+
+    if (search) {
+      // ========================================
+      // SEARCH: үр дүн цөөн тул төлөвийн шүүлтүүр, хуудаслалтыг санах ойд хийнэ
+      // (composite index шаардахгүй). Төлөвийг дээрх "идэвхтэй" дүрмээр шалгана.
+      // ========================================
+      let found = await searchUsers(search, searchType);
+
+      if (status !== "all") {
+        const wantSubscribed = status === "subscribed";
+        found = found.filter((doc) => isEffectivelySubscribed(doc.data(), nowMs) === wantSubscribed);
+      }
+
+      totalCount = found.length;
+      docs = found.slice(offset, offset + limit);
+    } else if (status === "all") {
+      // ========================================
+      // БҮГД
+      // ========================================
+      totalCount = await countOf(usersCol);
+      docs = await fetchPage(usersCol, totalCount, limit, offset);
+    } else if (status === "subscribed") {
+      // ========================================
+      // ИДЭВХТЭЙ: subscriptionStatus == "subscribed" БА subscriptionEndDate > одоо
+      // (analytics-ийн тоотой яг ижил). Дуусах огноогоор (удахгүй дуусах нь эхэндээ) эрэмбэлнэ.
+      // Index: users -> subscriptionStatus + subscriptionEndDate (analytics-д ашиглагдаж байгаа)
+      // ========================================
+      const subscribedQuery = () =>
+        usersCol
+          .where("subscriptionStatus", "==", "subscribed")
+          .where("subscriptionEndDate", ">", nowIso);
+
+      totalCount = await countOf(subscribedQuery());
+      const snapshot = await applyPage(
+        subscribedQuery().orderBy("subscriptionEndDate", "asc"),
+        limit,
+        offset
+      ).get();
+      docs = snapshot.docs;
+    } else {
+      // ========================================
+      // ИДЭВХГҮЙ = "бүгд" - "идэвхтэй". Firestore-д "үгүйсгэл" query байхгүй тул хоёр салангид
+      // олонлогийг залгаж хуудаслана:
+      //   B: төлөв "subscribed" боловч хугацаа нь дууссан (cron хараахан шинэчлээгүй)
+      //   A: төлөв "not_subscribed"
+      // B эхэнд (саяхан дууссан нь хамгийн сонирхолтой), дараа нь A (шинэ нь эхэндээ).
+      // ========================================
+      const expiredQuery = () =>
+        usersCol
+          .where("subscriptionStatus", "==", "subscribed")
+          .where("subscriptionEndDate", "<=", nowIso);
+      const notSubscribedQuery = () => usersCol.where("subscriptionStatus", "==", "not_subscribed");
+
+      const [expiredCount, notSubscribedCount] = await Promise.all([
+        countOf(expiredQuery()),
+        countOf(notSubscribedQuery()),
+      ]);
+      totalCount = expiredCount + notSubscribedCount;
+
+      docs = [];
+
+      if (offset < expiredCount) {
+        const snapshot = await applyPage(
+          expiredQuery().orderBy("subscriptionEndDate", "desc"),
+          Math.min(limit, expiredCount - offset),
+          offset
+        ).get();
+        docs.push(...snapshot.docs);
+      }
+
+      const remaining = limit - docs.length;
+      if (remaining > 0 && notSubscribedCount > 0) {
+        const notSubscribedOffset = Math.max(0, offset - expiredCount);
+        docs.push(
+          ...(await fetchPage(notSubscribedQuery(), notSubscribedCount, remaining, notSubscribedOffset))
+        );
+      }
+    }
+
+    const totalPages = Math.max(1, Math.ceil(totalCount / limit));
 
     // ========================================
     // PROCESS USERS
+    // GET дотор Firestore руу бичихгүй. Төлвийг уншихдаа дээрх дүрмээр тооцоолно,
+    // харин өгөгдлийн санд шинэчлэх ажлыг /api/cron/expire-subscriptions хийнэ.
     // ========================================
-    
-    const users: UserData[] = userDocs.map((doc) => {
+    const users: UserData[] = docs.map((doc) => {
       const data = doc.data();
-      
-      // Parse createdAt
+
       let createdAt: string;
       if (data.createdAt) {
-        if (data.createdAt.toDate) {
-          createdAt = data.createdAt.toDate().toISOString();
-        } else {
-          createdAt = data.createdAt;
-        }
+        createdAt = data.createdAt.toDate ? data.createdAt.toDate().toISOString() : data.createdAt;
       } else {
         createdAt = new Date().toISOString();
       }
-      
-      // Calculate subscription days left
-      let subscriptionDaysLeft: number | undefined;
-      let subscriptionStatus = data.subscriptionStatus || "not_subscribed";
-      
-      if (data.subscriptionEndDate) {
-        const endDate = new Date(data.subscriptionEndDate);
-        const now = new Date();
-        const diffTime = endDate.getTime() - now.getTime();
-        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-        
-        if (diffTime <= 0) {
-          subscriptionStatus = "not_subscribed";
-          subscriptionDaysLeft = 0;
-          
-          // Update expired subscription in background
-          if (data.subscriptionStatus === "subscribed") {
-            firestore.collection("users").doc(doc.id).update({
-              subscriptionStatus: "not_subscribed",
-              updatedAt: new Date().toISOString(),
-            }).catch(err => console.error(`Failed to update expired subscription for ${doc.id}`));
-          }
-        } else {
-          subscriptionStatus = "subscribed";
-          subscriptionDaysLeft = diffDays;
-        }
-      }
+
+      const subscribed = isEffectivelySubscribed(data, nowMs);
+      const subscriptionDaysLeft = subscribed
+        ? Math.ceil((Date.parse(data.subscriptionEndDate) - nowMs) / DAY_MS)
+        : undefined;
 
       return {
         id: doc.id,
         userId: data.userId,
-        username: data.username || data.displayName || "Unknown",
+        username:
+          data.username || data.displayName || data.name || data.email?.split("@")[0] || "Unknown",
         email: data.email || "",
         xp: data.xp || 0,
-        subscriptionStatus,
+        subscriptionStatus: subscribed ? "subscribed" : "not_subscribed",
         subscriptionEndDate: data.subscriptionEndDate || null,
         subscriptionDaysLeft,
         createdAt,
@@ -184,142 +363,142 @@ export async function GET(request: NextRequest) {
       };
     });
 
-    return NextResponse.json({
+    return json({
       data: users,
       totalPages,
       currentPage: page,
       totalCount,
     });
-
   } catch (error) {
     console.error("Error fetching users:", error);
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+    return json({ error: "Internal server error" }, 500);
   }
 }
 
+// ========================================
+// PATCH
+// ========================================
 export async function PATCH(request: NextRequest) {
   try {
-    const authHeader = request.headers.get("authorization");
-    if (!authHeader?.startsWith("Bearer ")) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    // Өгөгдөл өөрчилдөг тул token цуцлагдсан эсэхийг мөн шалгана
+    const admin = await requireAdmin(request, { checkRevoked: true });
+    if (!admin.ok) return admin.response;
+
+    const body = await request.json().catch(() => null);
+    if (!body || typeof body !== "object") {
+      return json({ error: "Invalid request body" }, 400);
     }
 
-    const token = authHeader.split(" ")[1];
-    const verifiedToken = await auth.verifyIdToken(token);
+    const { userId, subscriptionDays, xp, mode: rawMode } = body as Record<string, unknown>;
 
-    if (!verifiedToken.admin) {
-      return NextResponse.json({ error: "Admin access required" }, { status: 403 });
+    // ---------- Утга шалгах ----------
+    if (typeof userId !== "string" || !userId.trim() || userId.includes("/")) {
+      return json({ error: "User ID is required" }, 400);
     }
 
-    const { userId, subscriptionDays, xp, mode } = await request.json();
+    const days = toNumber(subscriptionDays);
+    const xpValue = toNumber(xp);
 
-    if (!userId) {
-      return NextResponse.json({ error: "User ID is required" }, { status: 400 });
+    if (days === undefined && xpValue === undefined) {
+      return json({ error: "Nothing to update" }, 400);
     }
 
-    // Verify user exists
+    if (
+      days !== undefined &&
+      (!Number.isInteger(days) || Math.abs(days) > MAX_SUBSCRIPTION_DAYS)
+    ) {
+      return json({ error: "Invalid subscriptionDays" }, 400);
+    }
+
+    if (rawMode !== undefined && rawMode !== "set" && rawMode !== "add") {
+      return json({ error: "Invalid mode" }, 400);
+    }
+    const mode: "set" | "add" = rawMode === "set" ? "set" : "add";
+
+    if (mode === "set" && days !== undefined && days < 0) {
+      return json({ error: "subscriptionDays must not be negative in set mode" }, 400);
+    }
+
+    if (xpValue !== undefined && (!Number.isFinite(xpValue) || xpValue > MAX_XP)) {
+      return json({ error: "Invalid xp" }, 400);
+    }
+
+    // ---------- Firebase Auth дээр хэрэглэгч байгаа эсэх ----------
+    let authUser;
     try {
-      await auth.getUser(userId);
-    } catch (error) {
-      return NextResponse.json({ error: "User not found" }, { status: 404 });
+      authUser = await auth.getUser(userId);
+    } catch (error: any) {
+      if (error?.code === "auth/user-not-found") {
+        return json({ error: "User not found" }, 404);
+      }
+      throw error;
     }
 
     const userRef = firestore.collection("users").doc(userId);
-    const userDoc = await userRef.get();
-    const updateData: any = {};
+    const counterRef = firestore.collection("counters").doc("users");
+    const auditRef = firestore.collection("adminAuditLogs").doc();
 
-    if (subscriptionDays !== undefined) {
-      if (subscriptionDays === 0) {
-        updateData.subscriptionStatus = "not_subscribed";
-        updateData.subscriptionEndDate = null;
-        updateData.subscriptionStartDate = null;
-      } else {
-        const currentUserData = userDoc.exists ? userDoc.data() : {};
-        let newEndDate: Date;
+    // ---------- Унших, тооцоолох, бичих нь нэг transaction ----------
+    // (хоёр хүсэлт зэрэг ирэхэд хоногууд алдагдахгүй, userId давхцахгүй)
+    await firestore.runTransaction(async (tx) => {
+      const userSnap = await tx.get(userRef);
+      const current = (userSnap.exists ? userSnap.data() : undefined) ?? {};
+      const now = new Date();
 
-        if (mode === "set") {
-          newEndDate = new Date();
-          newEndDate.setDate(newEndDate.getDate() + subscriptionDays);
-          updateData.subscriptionStatus = "subscribed";
-          updateData.subscriptionEndDate = newEndDate.toISOString();
-          updateData.subscriptionStartDate = new Date().toISOString();
-        } else {
-          if (subscriptionDays > 0) {
-            if (currentUserData?.subscriptionStatus === "subscribed" && currentUserData?.subscriptionEndDate) {
-              const currentEndDate = new Date(currentUserData.subscriptionEndDate);
-              const now = new Date();
-              newEndDate = currentEndDate > now ? new Date(currentEndDate) : new Date();
-              newEndDate.setDate(newEndDate.getDate() + subscriptionDays);
-            } else {
-              newEndDate = new Date();
-              newEndDate.setDate(newEndDate.getDate() + subscriptionDays);
-            }
-            updateData.subscriptionStatus = "subscribed";
-            updateData.subscriptionEndDate = newEndDate.toISOString();
-            if (!currentUserData?.subscriptionStartDate || currentUserData?.subscriptionStatus !== "subscribed") {
-              updateData.subscriptionStartDate = new Date().toISOString();
-            }
-          } else {
-            if (currentUserData?.subscriptionEndDate) {
-              newEndDate = new Date(currentUserData.subscriptionEndDate);
-              newEndDate.setDate(newEndDate.getDate() + subscriptionDays);
-              if (newEndDate <= new Date()) {
-                updateData.subscriptionStatus = "not_subscribed";
-                updateData.subscriptionEndDate = null;
-                updateData.subscriptionStartDate = null;
-              } else {
-                updateData.subscriptionStatus = "subscribed";
-                updateData.subscriptionEndDate = newEndDate.toISOString();
-              }
-            } else {
-              updateData.subscriptionStatus = "not_subscribed";
-              updateData.subscriptionEndDate = null;
-              updateData.subscriptionStartDate = null;
-            }
-          }
-        }
+      const updateData: Record<string, unknown> = {};
+
+      if (days !== undefined) {
+        Object.assign(updateData, computeSubscriptionUpdate(days, mode, current, now));
       }
-    }
+      if (xpValue !== undefined) {
+        updateData.xp = Math.max(0, Math.round(xpValue));
+      }
+      updateData.updatedAt = now.toISOString();
 
-    if (xp !== undefined) {
-      updateData.xp = Math.max(0, xp);
-    }
-
-    if (Object.keys(updateData).length > 0) {
-      updateData.updatedAt = new Date().toISOString();
-      
-      if (userDoc.exists) {
-        await userRef.update(updateData);
+      if (userSnap.exists) {
+        tx.update(userRef, updateData);
       } else {
-        const authUser = await auth.getUser(userId);
-        
-        // Generate userId only when creating new document
-        let newUserId: number | undefined;
-        try {
-          newUserId = await generateUniqueUserId();
-        } catch (error) {
-          console.error("Failed to generate userId:", error);
-        }
-        
-        await userRef.set({
+        // Firebase Auth-д байгаа боловч Firestore document үүсээгүй хэрэглэгч
+        const newUserId = await allocateUserId(tx, counterRef);
+
+        tx.set(userRef, {
           userId: newUserId,
-          username: authUser.displayName || authUser.email?.split('@')[0] || 'Unknown',
-          email: authUser.email || '',
+          username: authUser.displayName || authUser.email?.split("@")[0] || "Unknown",
+          email: authUser.email?.toLowerCase() || "",
           xp: 0,
           subscriptionStatus: "not_subscribed",
-          createdAt: authUser.metadata.creationTime || new Date().toISOString(),
+          createdAt: authUser.metadata.creationTime
+            ? new Date(authUser.metadata.creationTime)
+            : now,
           ...updateData,
         });
       }
-    }
 
-    return NextResponse.json({
-      success: true,
-      message: "User updated successfully"
+      // Аудитын бүртгэл: хэн, хэнд, юуг өөрчилсөн
+      tx.set(auditRef, {
+        at: now,
+        adminUid: admin.token.uid,
+        adminEmail: admin.token.email ?? null,
+        targetUserId: userId,
+        input: {
+          subscriptionDays: days ?? null,
+          mode: days !== undefined ? mode : null,
+          xp: xpValue ?? null,
+        },
+        applied: {
+          subscriptionStatus: updateData.subscriptionStatus ?? null,
+          subscriptionEndDate: updateData.subscriptionEndDate ?? null,
+          xp: updateData.xp ?? null,
+        },
+      });
     });
 
+    return json({
+      success: true,
+      message: "User updated successfully",
+    });
   } catch (error) {
     console.error("Error updating user:", error);
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+    return json({ error: "Internal server error" }, 500);
   }
 }
