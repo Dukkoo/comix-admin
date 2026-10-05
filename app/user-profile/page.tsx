@@ -242,7 +242,7 @@ function AvatarSection() {
           <div>
             <h2 className="text-base font-semibold text-white">Шинэ зураг хуулах</h2>
             <p className="text-xs text-zinc-400">
-              Зураг автоматаар 512x512 дөрвөлжин болж WebP хэлбэрээр хадгалагдана. Хамгийн ихдээ 5MB.
+              Зураг автоматаар 512x512 дөрвөлжин болж WebP хэлбэрээр хадгалагдана. GIF бол хөрвүүлэлтгүй, анимацтайгаа хэвээр хадгалагдана. Хамгийн ихдээ 5MB.
             </p>
           </div>
         </div>

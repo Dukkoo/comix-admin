@@ -80,22 +80,38 @@ export async function POST(request: NextRequest) {
     }
 
     const input = Buffer.from(await file.arrayBuffer());
+    const isGif = file.type === "image/gif" || file.name.toLowerCase().endsWith(".gif");
 
-    const output = await sharp(input)
-      .rotate()
-      .resize(OUTPUT_SIZE, OUTPUT_SIZE, { fit: "cover", position: "attention" })
-      .webp({ quality: 85, effort: 4 })
-      .toBuffer();
+    let output: Buffer;
+    let extension: string;
+    let contentType: string;
+
+    if (isGif) {
+      if (input.subarray(0, 4).toString("ascii") !== "GIF8") {
+        return NextResponse.json({ error: "Invalid GIF file" }, { status: 400 });
+      }
+      output = input;
+      extension = "gif";
+      contentType = "image/gif";
+    } else {
+      output = await sharp(input)
+        .rotate()
+        .resize(OUTPUT_SIZE, OUTPUT_SIZE, { fit: "cover", position: "attention" })
+        .webp({ quality: 85, effort: 4 })
+        .toBuffer();
+      extension = "webp";
+      contentType = "image/webp";
+    }
 
     const id = await reserveImageId();
-    const path = `profile-images/${id}.webp`;
+    const path = `profile-images/${id}.${extension}`;
 
     await r2Client.send(
       new PutObjectCommand({
         Bucket: process.env.R2_BUCKET_NAME!,
         Key: path,
         Body: output,
-        ContentType: "image/webp",
+        ContentType: contentType,
         CacheControl: "public, max-age=31536000, immutable",
       })
     );
