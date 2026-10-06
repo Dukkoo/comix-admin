@@ -1,9 +1,8 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { Button } from "@/components/ui/button";
 import Image from "next/image";
-import { Upload, X, Loader2 } from "lucide-react";
+import { Upload, X } from "lucide-react";
 import { toast } from "sonner";
 
 interface ImageUploaderProps {
@@ -32,23 +31,23 @@ export default function MangaImageUploader({
     const file = event.target.files?.[0];
     if (!file) return;
 
-    if (!file.type.startsWith('image/')) {
-      toast.error("Please select an image file");
+    if (!file.type.startsWith("image/")) {
+      toast.error("Зөвхөн зураг сонгоно уу");
       return;
     }
 
     if (file.size > 50 * 1024 * 1024) {
-      toast.error("Image must be less than 50MB");
+      toast.error("Зураг 50MB-аас бага байх ёстой");
       return;
     }
 
-    // Create preview
+    // Preview үүсгэнэ
     const preview = URL.createObjectURL(file);
     setPreviewUrl(preview);
-    
-    // Pass file to parent (we'll upload on form submit)
+
+    // Файлыг parent-д дамжуулна (form илгээх үед байршуулна)
     onFileChange(file);
-    onImageChange(preview); // Temporary preview URL
+    onImageChange(preview); // түр preview URL
   };
 
   const handleRemove = () => {
@@ -71,47 +70,38 @@ export default function MangaImageUploader({
       />
 
       {!previewUrl ? (
-        <Button
+        <button
           type="button"
-          variant="outline"
           onClick={() => fileInputRef.current?.click()}
-          className="w-full h-32 border-2 border-dashed border-zinc-600 hover:border-cyan-400 bg-zinc-800/50 hover:bg-zinc-700/50 text-white"
+          aria-label={label}
+          className="flex h-32 w-full flex-col items-center justify-center gap-2 border border-dashed border-[#00f0ff]/30 bg-black/20 text-zinc-400 transition-colors hover:border-[#00f0ff]/70 hover:bg-[#00f0ff]/5 hover:text-white"
         >
-          <div className="flex flex-col items-center space-y-2">
-            <Upload className="w-8 h-8 text-zinc-400" />
-            <span className="text-sm">{label}</span>
-          </div>
-        </Button>
+          <Upload
+            className="h-7 w-7 text-[#00f0ff]"
+            style={{ filter: "drop-shadow(0 0 6px rgba(0,240,255,0.5))" }}
+          />
+          <span className="px-2 text-center text-sm">{label}</span>
+        </button>
       ) : (
-        <div className="relative">
-          <div className="w-full h-32 relative rounded-lg overflow-hidden border border-zinc-600">
-            <Image
-              src={previewUrl}
-              alt={label}
-              fill
-              sizes="200px"
-              className="object-cover"
-            />
-          </div>
-          <div className="absolute top-2 right-2 flex space-x-1">
-            <Button
+        <div className="relative h-32 w-full overflow-hidden border border-[#00f0ff]/30">
+          <Image src={previewUrl} alt={label} fill sizes="200px" className="object-cover" />
+
+          <div className="absolute right-1.5 top-1.5 flex gap-1">
+            <button
               type="button"
-              size="sm"
-              variant="outline"
               onClick={() => fileInputRef.current?.click()}
-              className="bg-zinc-800/80 hover:bg-zinc-700 text-white border-zinc-600"
+              className="border border-white/20 bg-black/75 px-2 py-1 text-xs text-white transition-colors hover:bg-black"
             >
-              Change
-            </Button>
-            <Button
+              Солих
+            </button>
+            <button
               type="button"
-              size="sm"
-              variant="outline"
               onClick={handleRemove}
-              className="bg-red-500/80 hover:bg-red-600 text-white border-red-500"
+              aria-label="Зураг хасах"
+              className="flex h-7 w-7 items-center justify-center border border-[#ff2e88]/60 bg-[#ff2e88]/30 text-white transition-colors hover:bg-[#ff2e88]/60"
             >
-              <X className="w-4 h-4" />
-            </Button>
+              <X className="h-4 w-4" />
+            </button>
           </div>
         </div>
       )}

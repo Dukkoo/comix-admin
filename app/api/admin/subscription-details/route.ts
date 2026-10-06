@@ -68,11 +68,10 @@ export async function GET(request: NextRequest) {
     let expiringSoonCount = 0;
     let newSubscribersCount = 0;
     let monthlyRevenue = 0;
-    let payerCount = 0;
+    let monthlyActivations = 0;
 
-    const [expiringResult, activationsResult, paymentsResult] = await Promise.allSettled([
-      // 1) 7 хоногт дуусах: count() aggregation (document татахгүй, нэг талбарын range тул
-      //    composite index шаардахгүй; эрх идэвхтэй хэрэглэгчийн л дуусах огноо ирээдүйд байдаг)
+    const [expiringResult, paymentsResult, newSubscribersResult] = await Promise.allSettled([
+      // 1) 7 хоногт дуусах: count() aggregation (нэг талбарын range тул composite index шаардахгүй)
       firestore
         .collection("users")
         .where("subscriptionEndDate", ">", nowIso)
@@ -80,21 +79,21 @@ export async function GET(request: NextRequest) {
         .count()
         .get(),
 
-      // 2) Сүүлийн 90 өдөрт эхэлсэн эрхүүд: нэг query-ээр timeline, trend, шинэ хэрэглэгчийг гаргана
-      //    (өмнө нь 5 тусдаа query байсан)
-      firestore
-        .collection("users")
-        .where("subscriptionStartDate", ">=", new Date(nowMs - 91 * DAY_MS).toISOString())
-        .select("subscriptionStartDate", "subscriptionStatus", "subscriptionEndDate")
-        .get(),
-
-      // 3) Энэ сарын төлбөр (Монголын цагаар сарын эхнээс дараа сарын эхэн хүртэл)
-      //    Өмнө нь сарын сүүлийн өдөр хасагдаж байсан (endOfMonth = сүүлийн өдрийн 00:00)
+      // 2) Сүүлийн 90 өдрийн БҮХ төлбөр (payment_logs). Идэвхжүүлэлт, trend, орлого бүгд
+      //    нэг эх сурвалжаас тооцогдоно. Үүнд ЭРХ СУНГАСАН (renewal) төлбөр ч орно.
+      //    Өмнө нь users.subscriptionStartDate-ээс тооцдог байсан бөгөөд тэр нь зөвхөн
+      //    АНХ идэвхжүүлсэн огноог хадгалдаг тул сунгалтууд харагддаггүй байв.
       firestore
         .collection("payment_logs")
-        .where("processedAt", ">=", monthStart.toISOString())
-        .where("processedAt", "<", nextMonthStart.toISOString())
-        .select("amount", "userId", "invoiceId")
+        .where("processedAt", ">=", new Date(nowMs - 91 * DAY_MS).toISOString())
+        .select("amount", "userId", "invoiceId", "processedAt")
+        .get(),
+
+      // 3) Энэ сард эрх нь эхэлсэн хэрэглэгчид (шинэ идэвхжүүлэгч)
+      firestore
+        .collection("users")
+        .where("subscriptionStartDate", ">=", monthStart.toISOString())
+        .select("subscriptionStatus", "subscriptionEndDate")
         .get(),
     ]);
 
@@ -105,57 +104,51 @@ export async function GET(request: NextRequest) {
       console.error("[Subscription Details] expiringSoon:", expiringResult.reason);
     }
 
-    if (activationsResult.status === "fulfilled") {
-      activationsResult.value.docs.forEach((doc) => {
-        const data = doc.data();
-        const startMs = Date.parse(data.subscriptionStartDate);
-        if (isNaN(startMs) || startMs > nowMs) return;
-
-        // Timeline: тухайн өдөр идэвхжүүлсэн бүх хүн (төлвөөс үл хамааран)
-        const key = localDateKey(new Date(startMs));
-        if (dailyActivations[key] !== undefined) dailyActivations[key]++;
-
-        // Trend, шинэ хэрэглэгч: одоо ч эрх нь идэвхтэй хүмүүс.
-        // Хугацаа нь дууссан эсэхийг огнооноос шууд шалгана (cron-оос хамаарахгүй)
-        const endMs = data.subscriptionEndDate ? Date.parse(data.subscriptionEndDate) : NaN;
-        const isActive =
-          data.subscriptionStatus === "subscribed" && (isNaN(endMs) || endMs > nowMs);
-        if (!isActive) return;
-
-        if (startMs >= monthStart.getTime()) newSubscribersCount++;
-        periods.forEach((p) => {
-          if (startMs >= nowMs - p.days * DAY_MS) p.count++;
-        });
-      });
-    } else {
-      failed.push("activations");
-      console.error("[Subscription Details] activations:", activationsResult.reason);
-    }
-
     if (paymentsResult.status === "fulfilled") {
-      const seenInvoices = new Set<string>();
-      const payers = new Set<string>();
+      // Нэг invoice олон удаа бүртгэгдсэн (хуучин давхар сунгалтын алдаа) бол нэг л удаа тооцно.
+      // Хамгийн эрт бүртгэлийг үлдээнэ.
+      const unique = new Map<string, { time: number; amount: number }>();
 
       paymentsResult.value.docs.forEach((doc) => {
         const data = doc.data();
-
-        // Нэг invoice 2 удаа бүртгэгдсэн (давхар) бол орлогод нэг л удаа тооцно
-        if (data.invoiceId) {
-          const invoiceId = String(data.invoiceId);
-          if (seenInvoices.has(invoiceId)) return;
-          seenInvoices.add(invoiceId);
-        }
-
+        const time = Date.parse(data.processedAt);
         const amount = Number(data.amount);
-        if (Number.isFinite(amount) && amount > 0) monthlyRevenue += amount;
-        if (data.userId) payers.add(String(data.userId));
+        if (isNaN(time) || time > nowMs || !Number.isFinite(amount) || amount <= 0) return;
+
+        const key = data.invoiceId ? String(data.invoiceId) : doc.id;
+        const existing = unique.get(key);
+        if (!existing || time < existing.time) unique.set(key, { time, amount });
       });
 
-      payerCount = payers.size;
+      unique.forEach(({ time, amount }) => {
+        const key = localDateKey(new Date(time));
+        if (dailyActivations[key] !== undefined) dailyActivations[key]++;
+
+        periods.forEach((p) => {
+          if (time >= nowMs - p.days * DAY_MS) p.count++;
+        });
+
+        if (time >= monthStart.getTime() && time < nextMonthStart.getTime()) {
+          monthlyRevenue += amount;
+          monthlyActivations++;
+        }
+      });
     } else {
-      // Өөр аргаар (users collection) тооцсон тоог ижил нэрээр харуулбал төөрөгдөл үүсгэнэ
-      failed.push("revenue");
-      console.error("[Subscription Details] revenue:", paymentsResult.reason);
+      failed.push("activations", "revenue");
+      console.error("[Subscription Details] payments:", paymentsResult.reason);
+    }
+
+    if (newSubscribersResult.status === "fulfilled") {
+      newSubscribersResult.value.docs.forEach((doc) => {
+        const data = doc.data();
+        const endMs = data.subscriptionEndDate ? Date.parse(data.subscriptionEndDate) : NaN;
+        const isActive =
+          data.subscriptionStatus === "subscribed" && (isNaN(endMs) || endMs > nowMs);
+        if (isActive) newSubscribersCount++;
+      });
+    } else {
+      failed.push("newSubscribers");
+      console.error("[Subscription Details] newSubscribers:", newSubscribersResult.reason);
     }
 
     const detailsData = {
@@ -170,7 +163,7 @@ export async function GET(request: NextRequest) {
       trends: periods.map((p) => ({ period: p.label, count: p.count, days: p.days })),
       mrr: {
         amount: monthlyRevenue,
-        activeCount: payerCount,
+        activeCount: monthlyActivations,
         currency: "₮",
       },
       timeline: Object.entries(dailyActivations).map(([date, count]) => ({ date, count })),

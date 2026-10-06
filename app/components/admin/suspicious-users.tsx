@@ -203,7 +203,7 @@ export default function SuspiciousUsers() {
   };
 
   return (
-    <section className="cyber-panel cyber-panel-warn flex h-full flex-col">
+    <section className="cyber-panel cyber-panel-warn flex flex-col lg:h-0 lg:min-h-full">
       {/* Header */}
       <div className="flex items-center gap-2 border-b border-white/5 p-4">
         <button
@@ -268,7 +268,7 @@ export default function SuspiciousUsers() {
             <Button
               onClick={handleClearAllDevices}
               disabled={clearingAll}
-              className="mb-4 w-full border border-[#8b6cff]/60 bg-[#8b6cff]/15 text-[#c4b5ff] hover:bg-[#8b6cff]/30"
+              className="mb-4 w-full shrink-0 border border-[#8b6cff]/60 bg-[#8b6cff]/15 text-[#c4b5ff] hover:bg-[#8b6cff]/30"
             >
               <Trash2 className="mr-2 h-4 w-4" />
               {clearingAll
@@ -292,7 +292,7 @@ export default function SuspiciousUsers() {
               </p>
             </div>
           ) : (
-            <div className="cyber-scroll max-h-[420px] space-y-2 overflow-y-auto pr-1">
+            <div className="cyber-scroll max-h-[420px] min-h-0 flex-1 space-y-2 overflow-y-auto pr-1 lg:max-h-none">
               {users.map((user) => {
                 const isBanning = banning === user.id;
                 const isClearing = clearingUser === user.id;
@@ -300,57 +300,65 @@ export default function SuspiciousUsers() {
                 return (
                   <div
                     key={user.id}
-                    className="border border-white/10 bg-white/[0.02] p-3 transition-colors hover:border-[#ff2e88]/50"
+                    className="flex items-center gap-2 border border-white/10 bg-white/[0.02] px-3 py-2 transition-colors hover:border-[#ff2e88]/50"
                   >
-                    <div className="flex items-center justify-between gap-3">
+                    {/* Нэр, араас нь төхөөрөмжийн тоо */}
+                    <div className="flex min-w-0 flex-1 items-center gap-2">
                       <p className="truncate text-sm text-white" title={user.email}>
                         {user.email}
                       </p>
-                      <Badge className="shrink-0 border-[#ff2e88]/40 bg-[#ff2e88]/15 text-[#ff2e88]">
+                      <Badge className="shrink-0 border-[#ff2e88]/40 bg-[#ff2e88]/15 px-1.5 py-0 text-[#ff2e88]">
                         <Monitor className="mr-1 h-3 w-3" />
                         {user.deviceCount}
                       </Badge>
                     </div>
 
-                    <div className="mt-3 flex flex-wrap gap-2">
+                    {/* Товчнууд: мөрийн хамгийн ард */}
+                    <div className="flex shrink-0 items-center gap-1">
                       <Button
                         size="sm"
                         variant="outline"
                         onClick={() => handleClearUserDevices(user.id, user.email)}
                         disabled={isClearing}
-                        className="border-[#8b6cff]/50 bg-[#8b6cff]/10 text-[#c4b5ff] hover:bg-[#8b6cff]/30 hover:text-white"
+                        aria-label="Төхөөрөмж устгах"
+                        title="Төхөөрөмж устгах"
+                        className="h-7 w-7 border-[#8b6cff]/50 bg-[#8b6cff]/10 p-0 text-[#c4b5ff] hover:bg-[#8b6cff]/30 hover:text-white"
                       >
-                        <Trash2 className="mr-1 h-3 w-3" />
-                        {isClearing ? "..." : "Device"}
+                        {isClearing ? "…" : <Trash2 className="h-3.5 w-3.5" />}
                       </Button>
                       <Button
                         size="sm"
                         variant="outline"
                         onClick={() => router.push(`/users/${user.id}`)}
-                        className="cyber-btn"
+                        aria-label="Дэлгэрэнгүй"
+                        title="Дэлгэрэнгүй"
+                        className="cyber-btn h-7 w-7 p-0"
                       >
-                        <Eye className="mr-1 h-3 w-3" />
-                        Дэлгэрэнгүй
+                        <Eye className="h-3.5 w-3.5" />
                       </Button>
                       <Button
                         size="sm"
                         variant="outline"
                         onClick={() => handleQuickBan(user.id, 7)}
                         disabled={isBanning}
-                        className="border-[#ffd23f]/50 bg-[#ffd23f]/10 text-[#ffd23f] hover:bg-[#ffd23f]/25 hover:text-white"
+                        aria-label="7 хоногийн бан"
+                        title="7 хоногийн бан"
+                        className="h-7 gap-1 border-[#ffd23f]/50 bg-[#ffd23f]/10 px-2 text-xs text-[#ffd23f] hover:bg-[#ffd23f]/25 hover:text-white"
                       >
-                        <Ban className="mr-1 h-3 w-3" />
-                        {isBanning ? "..." : "7 хоног"}
+                        <Ban className="h-3 w-3" />
+                        {isBanning ? "…" : "7"}
                       </Button>
                       <Button
                         size="sm"
                         variant="outline"
                         onClick={() => handleQuickBan(user.id, 30)}
                         disabled={isBanning}
-                        className="border-[#ff2e88]/60 bg-[#ff2e88]/15 text-[#ff2e88] hover:bg-[#ff2e88]/35 hover:text-white"
+                        aria-label="30 хоногийн бан"
+                        title="30 хоногийн бан"
+                        className="h-7 gap-1 border-[#ff2e88]/60 bg-[#ff2e88]/15 px-2 text-xs text-[#ff2e88] hover:bg-[#ff2e88]/35 hover:text-white"
                       >
-                        <Ban className="mr-1 h-3 w-3" />
-                        {isBanning ? "..." : "30 хоног"}
+                        <Ban className="h-3 w-3" />
+                        {isBanning ? "…" : "30"}
                       </Button>
                     </div>
                   </div>

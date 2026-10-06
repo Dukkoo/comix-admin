@@ -12,8 +12,8 @@ interface UserData {
   subscriptionStatus: "subscribed" | "not_subscribed";
   subscriptionDaysLeft?: number;
   subscriptionEndDate?: string;
-  createdAt: any;
-  lastLogin?: any;
+  createdAt: string | null;
+  lastLogin?: string | null;
 }
 
 type Doc = FirebaseFirestore.QueryDocumentSnapshot;
@@ -29,6 +29,13 @@ const VALID_STATUSES = ["all", "subscribed", "not_subscribed"];
 
 const json = (body: unknown, status = 200) =>
   NextResponse.json(body, { status, headers: { "Cache-Control": "no-store" } });
+
+// Firestore Timestamp, ISO тэмдэгт мөр, Date аль ч хэлбэрийг ISO болгоно. Байхгүй бол null
+const toIso = (value: any): string | null => {
+  if (!value) return null;
+  const date = typeof value.toDate === "function" ? value.toDate() : new Date(value);
+  return isNaN(date.getTime()) ? null : date.toISOString();
+};
 
 // ========================================
 // ИДЭВХТЭЙ ЭРХИЙН ЯГ ТОДОРХОЙЛОЛТ
@@ -81,7 +88,8 @@ async function fetchPage(base: Query, total: number, limit: number, offset: numb
 // Өмнөх санамсаргүй сонголт нь 90,000 хэрэглэгчээс хойш бүтэлгүйтэх, мөн хоёр хүсэлт
 // зэрэг ирвэл ижил ID өгөх эрсдэлтэй байв. Одоо `counters/users` дахь тоолуурыг
 // transaction дотор нэмэгдүүлнэ. Анх удаа ажиллахад одоо байгаа хамгийн их userId-аас
-// үргэлжилнэ. Мөн client талын сайт санамсаргүй ID өгдөг тул давхцахгүйг шалгана.
+// үргэлжилнэ. Мөн client талын сайт санамсаргүй ID өгдөг тул давхцахгүйг шалгана
+// (users баримт болон `user_ids` индекс хоёуланг).
 async function allocateUserId(
   tx: FirebaseFirestore.Transaction,
   counterRef: FirebaseFirestore.DocumentReference
@@ -102,8 +110,11 @@ async function allocateUserId(
 
   let candidate = last + 1;
   for (let attempt = 0; attempt < 20; attempt++) {
-    const clash = await tx.get(usersRef.where("userId", "==", candidate).limit(1));
-    if (clash.empty) break;
+    const [clash, reserved] = await Promise.all([
+      tx.get(usersRef.where("userId", "==", candidate).limit(1)),
+      tx.get(firestore.collection("user_ids").doc(String(candidate))),
+    ]);
+    if (clash.empty && !reserved.exists) break;
     candidate += 1;
   }
 
@@ -336,13 +347,6 @@ export async function GET(request: NextRequest) {
     const users: UserData[] = docs.map((doc) => {
       const data = doc.data();
 
-      let createdAt: string;
-      if (data.createdAt) {
-        createdAt = data.createdAt.toDate ? data.createdAt.toDate().toISOString() : data.createdAt;
-      } else {
-        createdAt = new Date().toISOString();
-      }
-
       const subscribed = isEffectivelySubscribed(data, nowMs);
       const subscriptionDaysLeft = subscribed
         ? Math.ceil((Date.parse(data.subscriptionEndDate) - nowMs) / DAY_MS)
@@ -358,8 +362,8 @@ export async function GET(request: NextRequest) {
         subscriptionStatus: subscribed ? "subscribed" : "not_subscribed",
         subscriptionEndDate: data.subscriptionEndDate || null,
         subscriptionDaysLeft,
-        createdAt,
-        lastLogin: data.lastLogin || null,
+        createdAt: toIso(data.createdAt),
+        lastLogin: toIso(data.lastLogin),
       };
     });
 
@@ -461,6 +465,12 @@ export async function PATCH(request: NextRequest) {
         // Firebase Auth-д байгаа боловч Firestore document үүсээгүй хэрэглэгч
         const newUserId = await allocateUserId(tx, counterRef);
 
+        // Шинэ санамсаргүй ID олгогч (user_ids индекс)-тэй давхцахгүйн тулд ID-г нөөцөлнө
+        tx.create(firestore.collection("user_ids").doc(String(newUserId)), {
+          uid: userId,
+          createdAt: now.toISOString(),
+        });
+
         tx.set(userRef, {
           userId: newUserId,
           username: authUser.displayName || authUser.email?.split("@")[0] || "Unknown",
@@ -468,8 +478,8 @@ export async function PATCH(request: NextRequest) {
           xp: 0,
           subscriptionStatus: "not_subscribed",
           createdAt: authUser.metadata.creationTime
-            ? new Date(authUser.metadata.creationTime)
-            : now,
+            ? new Date(authUser.metadata.creationTime).toISOString()
+            : now.toISOString(),
           ...updateData,
         });
       }

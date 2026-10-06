@@ -3,7 +3,7 @@
 
 import { useState, useEffect, type CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
-import { X, TrendingUp, Users, Clock, Activity, RefreshCw } from 'lucide-react';
+import { X, TrendingUp, Users, Clock, Activity, RefreshCw, AlertTriangle } from 'lucide-react';
 import {
   LineChart,
   Line,
@@ -41,6 +41,7 @@ interface SubscriptionDetails {
     date: string;
     count: number;
   }>;
+  partial?: string[];
 }
 
 interface SubscriptionDetailsModalProps {
@@ -57,6 +58,7 @@ const NEON = {
 
 const AXIS_COLOR = '#8a93b8';
 const GRID_COLOR = 'rgba(0, 240, 255, 0.10)';
+const STALE_AFTER_MS = 60_000;
 
 const tooltipStyle: CSSProperties = {
   backgroundColor: '#0a0d18',
@@ -65,10 +67,31 @@ const tooltipStyle: CSSProperties = {
   color: '#f4f4f5',
 };
 
+const PARTIAL_LABELS: Record<string, string> = {
+  expiringSoon: '7 хоногт дуусах',
+  newSubscribers: 'шинэ идэвхжүүлэгч',
+  activations: 'идэвхжүүлэлтийн график, тренд',
+  revenue: 'орлого',
+};
+
+// 'YYYY-MM-DD' -> [жил, сар, өдөр]. new Date() ашиглахгүй тул цагийн бүсээс хамаарч өдөр зөрөхгүй
+const parseDateKey = (value: string): [number, number, number] => {
+  const [year, month, day] = String(value).split('-').map(Number);
+  return [year, month, day];
+};
+
+const pad = (value: number) => String(value).padStart(2, '0');
+
+const formatTime = (ms: number) => {
+  const date = new Date(ms);
+  return `${pad(date.getHours())}:${pad(date.getMinutes())}`;
+};
+
 export default function SubscriptionDetailsModal({ isOpen, onClose }: SubscriptionDetailsModalProps) {
   const { currentUser } = useAuth();
   const [data, setData] = useState<SubscriptionDetails | null>(null);
   const [loading, setLoading] = useState(false);
+  const [fetchedAt, setFetchedAt] = useState<number | null>(null);
   const [selectedPeriod, setSelectedPeriod] = useState<7 | 30 | 90>(30);
 
   // true = амжилттай, false = алдаа
@@ -97,6 +120,7 @@ export default function SubscriptionDetailsModal({ isOpen, onClose }: Subscripti
 
       const details = await response.json();
       setData(details);
+      setFetchedAt(Date.now());
       return true;
     } catch (error) {
       console.error('Error fetching details:', error);
@@ -116,11 +140,12 @@ export default function SubscriptionDetailsModal({ isOpen, onClose }: Subscripti
     if (ok) toast.success('Мэдээлэл шинэчлэгдлээ');
   };
 
+  // Нээх бүрт: өгөгдөл байхгүй эсвэл 1 минутаас илүү хуучирсан бол дахин татна
   useEffect(() => {
-    if (isOpen && !data && !loading) {
+    if (!isOpen || loading) return;
+    if (!data || !fetchedAt || Date.now() - fetchedAt > STALE_AFTER_MS) {
       fetchDetails();
     }
-    // Зөвхөн modal нээгдэх үед, өгөгдөл байхгүй бол татна
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen]);
 
@@ -141,6 +166,10 @@ export default function SubscriptionDetailsModal({ isOpen, onClose }: Subscripti
     return data.timeline.slice(-selectedPeriod);
   };
 
+  // Query нь бүтэлгүйтсэн хэсгийн 0-г "үнэн" мэт харуулахгүй
+  const isMissing = (key: string) => Boolean(data?.partial?.includes(key));
+  const partialNames = (data?.partial || []).map((key) => PARTIAL_LABELS[key] || key);
+
   // Portal ашиглаж байгаа нь sidebar зэрэг бусад элементийн дээр найдвартай гарахад хэрэгтэй
   return createPortal(
     <div
@@ -156,26 +185,31 @@ export default function SubscriptionDetailsModal({ isOpen, onClose }: Subscripti
         style={{ boxShadow: '0 0 70px rgba(0, 240, 255, 0.12), 0 24px 48px rgba(0, 0, 0, 0.6)' }}
       >
         {/* Header */}
-        <div className="flex items-center justify-end gap-2 border-b border-white/5 px-6 py-3">
-          <button
-            type="button"
-            onClick={handleRefresh}
-            disabled={loading}
-            title="Шинэчлэх"
-            aria-label="Шинэчлэх"
-            className="cyber-btn p-2"
-          >
-            <RefreshCw className={`h-5 w-5 ${loading ? 'animate-spin' : ''}`} />
-          </button>
-          <button
-            type="button"
-            onClick={onClose}
-            title="Хаах"
-            aria-label="Хаах"
-            className="cyber-btn p-2"
-          >
-            <X className="h-5 w-5" />
-          </button>
+        <div className="flex items-center justify-between gap-2 border-b border-white/5 px-6 py-3">
+          <p className="text-xs text-zinc-500">
+            {fetchedAt ? `Шинэчлэгдсэн: ${formatTime(fetchedAt)} · Монголын цаг` : ''}
+          </p>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handleRefresh}
+              disabled={loading}
+              title="Шинэчлэх"
+              aria-label="Шинэчлэх"
+              className="cyber-btn p-2"
+            >
+              <RefreshCw className={`h-5 w-5 ${loading ? 'animate-spin' : ''}`} />
+            </button>
+            <button
+              type="button"
+              onClick={onClose}
+              title="Хаах"
+              aria-label="Хаах"
+              className="cyber-btn p-2"
+            >
+              <X className="h-5 w-5" />
+            </button>
+          </div>
         </div>
 
         {/* Content */}
@@ -189,6 +223,25 @@ export default function SubscriptionDetailsModal({ isOpen, onClose }: Subscripti
             </div>
           ) : data ? (
             <div className="space-y-6">
+              {/* Partial warning */}
+              {partialNames.length > 0 && (
+                <div
+                  role="alert"
+                  className="flex items-start gap-3 border px-4 py-3 text-sm"
+                  style={{
+                    color: NEON.amber,
+                    borderColor: 'rgba(255, 210, 63, 0.4)',
+                    backgroundColor: 'rgba(255, 210, 63, 0.08)',
+                  }}
+                >
+                  <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0" />
+                  <p>
+                    Зарим мэдээллийг татаж чадсангүй: {partialNames.join(', ')}. Эдгээр хэсгийн утга
+                    бүрэн бус тул "—" гэж харуулав. Дахин шинэчилнэ үү.
+                  </p>
+                </div>
+              )}
+
               {/* Quick Stats */}
               <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4">
                 {/* Expiring Soon */}
@@ -210,7 +263,7 @@ export default function SubscriptionDetailsModal({ isOpen, onClose }: Subscripti
                     </span>
                   </div>
                   <p className="cyber-glow font-display text-4xl font-bold tabular-nums">
-                    {data.expiringSoon.count}
+                    {isMissing('expiringSoon') ? '—' : data.expiringSoon.count}
                   </p>
                   <p className="mt-2 text-sm text-zinc-300">{data.expiringSoon.label}</p>
                 </div>
@@ -234,12 +287,12 @@ export default function SubscriptionDetailsModal({ isOpen, onClose }: Subscripti
                     </span>
                   </div>
                   <p className="cyber-glow font-display text-4xl font-bold tabular-nums">
-                    {data.newSubscribers.count}
+                    {isMissing('newSubscribers') ? '—' : data.newSubscribers.count}
                   </p>
                   <p className="mt-2 text-sm text-zinc-300">{data.newSubscribers.label}</p>
                 </div>
 
-                {/* MRR */}
+                {/* Revenue */}
                 <div
                   className="cyber-panel cyber-stat p-5 lg:col-span-2"
                   style={{ '--accent': NEON.magenta } as CSSProperties}
@@ -259,15 +312,17 @@ export default function SubscriptionDetailsModal({ isOpen, onClose }: Subscripti
                         backgroundColor: 'rgba(255, 46, 136, 0.1)',
                       }}
                     >
-                      MRR
+                      Орлого
                     </span>
                   </div>
                   <p className="cyber-glow font-display text-4xl font-bold tabular-nums">
-                    {data.mrr.amount.toLocaleString()}
-                    {data.mrr.currency}
+                    {isMissing('revenue')
+                      ? '—'
+                      : `${data.mrr.amount.toLocaleString()}${data.mrr.currency}`}
                   </p>
                   <p className="mt-2 text-sm text-zinc-300">
-                    Энэ сарын орлого, {data.mrr.activeCount} идэвхжүүлэлт
+                    Энэ сарын орлого (QPay),{' '}
+                    {isMissing('revenue') ? '—' : data.mrr.activeCount} идэвхжүүлэлт
                   </p>
                 </div>
               </div>
@@ -280,36 +335,43 @@ export default function SubscriptionDetailsModal({ isOpen, onClose }: Subscripti
                     <h3 className="font-display text-lg font-semibold text-white">
                       Идэвхжүүлэлтийн тренд
                     </h3>
-                    <p className="text-sm text-zinc-400">Хугацаагаар харьцуулалт</p>
+                    <p className="text-sm text-zinc-400">
+                      Сүүлийн 7 / 30 / 90 хоногийн төлбөртэй идэвхжүүлэлт
+                    </p>
                   </div>
                 </div>
 
-                <div className="h-64">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={data.trends}>
-                      <defs>
-                        <linearGradient id="cyBarGradient" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="0%" stopColor={NEON.cyan} />
-                          <stop offset="100%" stopColor={NEON.violet} />
-                        </linearGradient>
-                      </defs>
-                      <CartesianGrid strokeDasharray="3 3" stroke={GRID_COLOR} />
-                      <XAxis dataKey="period" stroke={AXIS_COLOR} style={{ fontSize: '12px' }} />
-                      <YAxis stroke={AXIS_COLOR} style={{ fontSize: '12px' }} />
-                      <Tooltip
-                        contentStyle={tooltipStyle}
-                        itemStyle={{ color: '#f4f4f5' }}
-                        labelStyle={{ color: NEON.cyan, fontWeight: 600 }}
-                        cursor={{ fill: 'rgba(0, 240, 255, 0.06)' }}
-                      />
-                      <Bar
-                        dataKey="count"
-                        fill="url(#cyBarGradient)"
-                        radius={[2, 2, 0, 0]}
-                      />
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
+                {isMissing('activations') ? (
+                  <p className="py-16 text-center text-zinc-500">Мэдээлэл бүрэн бус</p>
+                ) : (
+                  <div className="h-64">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={data.trends}>
+                        <defs>
+                          <linearGradient id="cyBarGradient" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="0%" stopColor={NEON.cyan} />
+                            <stop offset="100%" stopColor={NEON.violet} />
+                          </linearGradient>
+                        </defs>
+                        <CartesianGrid strokeDasharray="3 3" stroke={GRID_COLOR} />
+                        <XAxis dataKey="period" stroke={AXIS_COLOR} style={{ fontSize: '12px' }} />
+                        <YAxis stroke={AXIS_COLOR} style={{ fontSize: '12px' }} allowDecimals={false} />
+                        <Tooltip
+                          contentStyle={tooltipStyle}
+                          itemStyle={{ color: '#f4f4f5' }}
+                          labelStyle={{ color: NEON.cyan, fontWeight: 600 }}
+                          cursor={{ fill: 'rgba(0, 240, 255, 0.06)' }}
+                          formatter={(value: any) => [value, 'Идэвхжүүлэлт']}
+                        />
+                        <Bar
+                          dataKey="count"
+                          fill="url(#cyBarGradient)"
+                          radius={[2, 2, 0, 0]}
+                        />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                )}
               </div>
 
               {/* Timeline Chart */}
@@ -321,7 +383,7 @@ export default function SubscriptionDetailsModal({ isOpen, onClose }: Subscripti
                       <h3 className="font-display text-lg font-semibold text-white">
                         Өдөр тутмын идэвхжүүлэлт
                       </h3>
-                      <p className="text-sm text-zinc-400">Хугацааны дагуу</p>
+                      <p className="text-sm text-zinc-400">QPay-ээр төлсөн, сунгалт орно</p>
                     </div>
                   </div>
 
@@ -352,43 +414,47 @@ export default function SubscriptionDetailsModal({ isOpen, onClose }: Subscripti
                   </div>
                 </div>
 
-                <div className="h-80">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <LineChart data={getFilteredTimeline()}>
-                      <CartesianGrid strokeDasharray="3 3" stroke={GRID_COLOR} />
-                      <XAxis
-                        dataKey="date"
-                        stroke={AXIS_COLOR}
-                        style={{ fontSize: '11px' }}
-                        tickFormatter={(value) => {
-                          const date = new Date(value);
-                          return `${date.getMonth() + 1}/${date.getDate()}`;
-                        }}
-                      />
-                      <YAxis stroke={AXIS_COLOR} style={{ fontSize: '12px' }} />
-                      <Tooltip
-                        contentStyle={tooltipStyle}
-                        itemStyle={{ color: '#f4f4f5' }}
-                        labelStyle={{ color: NEON.cyan, fontWeight: 600 }}
-                        labelFormatter={(value) => {
-                          const date = new Date(value);
-                          return date.toLocaleDateString('mn-MN');
-                        }}
-                        formatter={(value: any) => [value, 'Идэвхжүүлэлт']}
-                        cursor={{ stroke: 'rgba(0, 240, 255, 0.3)', strokeWidth: 1, strokeDasharray: '5 5' }}
-                      />
-                      <Line
-                        type="monotone"
-                        dataKey="count"
-                        stroke={NEON.cyan}
-                        strokeWidth={3}
-                        dot={{ fill: NEON.cyan, r: 3, strokeWidth: 0 }}
-                        activeDot={{ r: 6, fill: NEON.magenta, stroke: NEON.magenta }}
-                        style={{ filter: 'drop-shadow(0 0 6px rgba(0, 240, 255, 0.7))' }}
-                      />
-                    </LineChart>
-                  </ResponsiveContainer>
-                </div>
+                {isMissing('activations') ? (
+                  <p className="py-24 text-center text-zinc-500">Мэдээлэл бүрэн бус</p>
+                ) : (
+                  <div className="h-80">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <LineChart data={getFilteredTimeline()}>
+                        <CartesianGrid strokeDasharray="3 3" stroke={GRID_COLOR} />
+                        <XAxis
+                          dataKey="date"
+                          stroke={AXIS_COLOR}
+                          style={{ fontSize: '11px' }}
+                          tickFormatter={(value) => {
+                            const [, month, day] = parseDateKey(value);
+                            return `${month}/${day}`;
+                          }}
+                        />
+                        <YAxis stroke={AXIS_COLOR} style={{ fontSize: '12px' }} allowDecimals={false} />
+                        <Tooltip
+                          contentStyle={tooltipStyle}
+                          itemStyle={{ color: '#f4f4f5' }}
+                          labelStyle={{ color: NEON.cyan, fontWeight: 600 }}
+                          labelFormatter={(value) => {
+                            const [year, month, day] = parseDateKey(value);
+                            return `${year}.${pad(month)}.${pad(day)}`;
+                          }}
+                          formatter={(value: any) => [value, 'Идэвхжүүлэлт']}
+                          cursor={{ stroke: 'rgba(0, 240, 255, 0.3)', strokeWidth: 1, strokeDasharray: '5 5' }}
+                        />
+                        <Line
+                          type="monotone"
+                          dataKey="count"
+                          stroke={NEON.cyan}
+                          strokeWidth={3}
+                          dot={{ fill: NEON.cyan, r: 3, strokeWidth: 0 }}
+                          activeDot={{ r: 6, fill: NEON.magenta, stroke: NEON.magenta }}
+                          style={{ filter: 'drop-shadow(0 0 6px rgba(0, 240, 255, 0.7))' }}
+                        />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  </div>
+                )}
               </div>
             </div>
           ) : (

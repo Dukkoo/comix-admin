@@ -1,14 +1,13 @@
+// app/projects/chapters/[mangaId]/edit/[chapterId]/edit-chapter-form.tsx
 "use client";
 
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import MultiImageUploader, { ImageUpload } from "@/components/multi-image-uploader";
-import { useAuth } from '@/app/providers';
-import { SaveIcon, ArrowLeft } from "lucide-react";
+import { useState, type CSSProperties } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState, useEffect } from "react";
+import { ArrowLeft, SaveIcon } from "lucide-react";
 import { toast } from "sonner";
+import MultiImageUploader, { ImageUpload } from "@/components/multi-image-uploader";
+import { useAuth } from "@/app/providers";
 import { updateChapter, saveChapterImages } from "./actions";
 import { uploadImageDirectToR2 } from "@/lib/upload-direct";
 import { deleteFromR2Server } from "@/app/actions/upload";
@@ -21,245 +20,183 @@ type Props = {
   currentImages: string[];
 };
 
-export default function EditChapterForm({ 
-  mangaId, 
-  mangaTitle, 
-  chapterId, 
+// R2-ээс устгахын тулд зургийн URL-ийг storage path болгоно
+const toStoragePath = (imageUrl: string) => {
+  try {
+    return new URL(imageUrl).pathname.substring(1);
+  } catch {
+    return "";
+  }
+};
+
+export default function EditChapterForm({
+  mangaId,
+  mangaTitle,
+  chapterId,
   currentChapterNumber,
-  currentImages = []
+  currentImages = [],
 }: Props) {
   const auth = useAuth();
   const router = useRouter();
   const [loading, setLoading] = useState(false);
-  const [chapterNumber, setChapterNumber] = useState<number>(currentChapterNumber);
-  const [chapterImages, setChapterImages] = useState<ImageUpload[]>([]);
-
-  useEffect(() => {
-    const existingImages: ImageUpload[] = currentImages.map((url, index) => ({
+  // Тоог текстээр хадгална: талбарыг цэвэрлэж дахин бичих, 0 дугаартай бүлгийг засах боломжтой
+  const [chapterNumber, setChapterNumber] = useState<string>(String(currentChapterNumber));
+  const [chapterImages, setChapterImages] = useState<ImageUpload[]>(() =>
+    currentImages.map((url, index) => ({
       id: `existing-${index}`,
-      url: url,
+      url,
       preview: url,
-    }));
-    setChapterImages(existingImages);
-  }, [currentImages]);
+    }))
+  );
+
+  const handleChapterNumberChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value;
+
+    if (value === "" || /^\d+$/.test(value)) {
+      setChapterNumber(value);
+    }
+  };
+
+  const parsedNumber = parseInt(chapterNumber, 10);
+  const numberValid = chapterNumber !== "" && !isNaN(parsedNumber) && parsedNumber >= 0;
+  const numberChanged = numberValid && parsedNumber !== currentChapterNumber;
+  const newImageCount = chapterImages.filter((img) => img.file).length;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    if (!numberValid) {
+      toast.error("Бүлгийн дугаар оруулна уу");
+      return;
+    }
+
+    if (chapterImages.length === 0) {
+      toast.error("Дор хаяж 1 зураг оруулна уу");
+      return;
+    }
+
     setLoading(true);
+    const toastId = toast.loading("Хадгалж байна...");
 
     try {
       const token = await auth?.currentUser?.getIdToken();
 
       if (!token) {
-        toast.error("Authentication required");
-        setLoading(false);
+        toast.error("Нэвтрээгүй байна", { id: toastId });
         return;
       }
 
-      if (!chapterNumber || chapterNumber < 1) {
-        toast.error("Please enter a valid chapter number");
-        setLoading(false);
-        return;
-      }
-
-      if (chapterImages.length === 0) {
-        toast.error("Please upload at least one chapter image");
-        setLoading(false);
-        return;
-      }
-
-      const loadingToast = toast.loading("Updating chapter...");
-
-      // Update chapter number if changed
-      if (chapterNumber !== currentChapterNumber) {
-        const updateResponse = await updateChapter(mangaId, chapterId, {
-          chapterNumber
-        }, token);
+      // 1) Бүлгийн дугаар өөрчлөгдсөн бол шинэчилнэ
+      if (numberChanged) {
+        const updateResponse = await updateChapter(mangaId, chapterId, { chapterNumber: parsedNumber }, token);
 
         if (updateResponse.error) {
-          toast.dismiss(loadingToast);
-          toast.error("Failed to update chapter", {
-            description: updateResponse.message,
-          });
-          setLoading(false);
+          toast.error("Хадгалж чадсангүй", { id: toastId, description: updateResponse.message });
           return;
         }
       }
 
-      // Handle image changes
-      const existingImageUrls = currentImages;
-      const imagesToDelete: string[] = [];
+      // Жагсаалтаас хасагдсан хуучин зургууд (storage-оос хадгалалт амжилттай болсны дараа устгана)
+      const imagesToDelete = currentImages.filter(
+        (url) => !chapterImages.some((img) => img.url === url)
+      );
 
-      // Find images to delete (removed from list)
-      existingImageUrls.forEach(url => {
-        const stillExists = chapterImages.some(img => img.url === url);
-        if (!stillExists) {
-          imagesToDelete.push(url);
+      // 2) Шинэ зургуудыг шууд R2 руу байршуулна (Vercel-ээр дамжихгүй)
+      const uploads: { pageIndex: number; promise: Promise<{ url?: string }> }[] = [];
+
+      if (newImageCount > 0) {
+        toast.loading(`${newImageCount} шинэ зураг байршуулж байна...`, { id: toastId });
+
+        chapterImages.forEach((image, i) => {
+          if (!image.file) return;
+
+          const timestamp = Date.now();
+          const cleanFileName = image.file.name.replace(/[^a-zA-Z0-9.-]/g, "_");
+          const imagePath = `mangas/${mangaId}/chapters/${parsedNumber}/${timestamp}-page-${i + 1}-${cleanFileName}`;
+
+          uploads.push({
+            pageIndex: i,
+            promise: uploadImageDirectToR2(image.file, imagePath, token)
+              .then((publicUrl) => ({ url: publicUrl }))
+              .catch(() => ({ url: undefined })),
+          });
+        });
+      }
+
+      const uploadResults = await Promise.all(uploads.map((u) => u.promise));
+
+      const uploadedByPage = new Map<number, string>();
+      const failedPages: number[] = [];
+      uploadResults.forEach((result, i) => {
+        const { pageIndex } = uploads[i];
+        if (result.url) uploadedByPage.set(pageIndex, result.url);
+        else failedPages.push(pageIndex + 1);
+      });
+
+      // Шинэ зураг бүгд бүтэлгүйтвэл юу ч хадгалахгүй, хуучин зургуудыг устгахгүй
+      if (uploads.length > 0 && uploadedByPage.size === 0) {
+        toast.error("Шинэ зургууд байршсангүй", {
+          id: toastId,
+          description: "Дахин оролдоно уу эсвэл интернэт холболтоо шалгана уу",
+        });
+        return;
+      }
+
+      if (failedPages.length > 0) {
+        toast.warning("Зарим зураг байршуулж чадсангүй", {
+          description: `Амжилтгүй хуудас: ${failedPages.join(", ")}. ${uploadedByPage.size}/${uploads.length} шинэ зураг байршлаа.`,
+        });
+      }
+
+      // 3) Эцсийн дарааллаар зургийн URL-уудыг бүрдүүлнэ (хуучин + шинэ)
+      const finalImageUrls: string[] = [];
+      chapterImages.forEach((image, i) => {
+        if (image.file) {
+          const uploaded = uploadedByPage.get(i);
+          if (uploaded) finalImageUrls.push(uploaded);
+        } else {
+          finalImageUrls.push(image.url);
         }
       });
 
-      // Delete removed images from R2
+      toast.loading("Хадгалж байна...", { id: toastId });
+
+      const saveImagesResponse = await saveChapterImages(
+        { mangaId, chapterId, images: finalImageUrls },
+        token
+      );
+
+      if (saveImagesResponse.error) {
+        toast.error("Зургийг хадгалж чадсангүй", {
+          id: toastId,
+          description: saveImagesResponse.message,
+        });
+        return;
+      }
+
+      // 4) Хадгалалт амжилттай болсны дараа хасагдсан зургуудыг storage-оос устгана
+      //    (өмнө нь устгаад дараа нь хадгалах үед алдаа гарвал бүлэг эвдэрдэг байсан)
       if (imagesToDelete.length > 0) {
-        toast.dismiss(loadingToast);
-        const deleteToast = toast.loading(`Deleting ${imagesToDelete.length} removed images...`);
-        
-        for (const imageUrl of imagesToDelete) {
-          try {
-            const url = new URL(imageUrl);
-            const path = url.pathname.substring(1);
-            await deleteFromR2Server(path);
-          } catch (error) {
-            console.warn("Failed to delete image:", imageUrl, error);
-          }
+        const deleteResults = await Promise.allSettled(
+          imagesToDelete.map((url) => deleteFromR2Server(toStoragePath(url)))
+        );
+        const failedDeletes = deleteResults.filter((r) => r.status === "rejected").length;
+        if (failedDeletes > 0) {
+          toast.warning(`${failedDeletes} хуучин зургийг устгаж чадсангүй`);
         }
-        
-        toast.dismiss(deleteToast);
       }
 
-      // Count new images to upload
-      const newImages = chapterImages.filter(img => img.file);
-      
-      if (newImages.length > 0) {
-        toast.dismiss(loadingToast);
-        const uploadToast = toast.loading(`Uploading ${newImages.length} new images...`);
-
-        // Upload new images DIRECTLY to R2 (NO VERCEL BANDWIDTH!)
-        const uploadPromises: Promise<{ index: number; url?: string; error?: string }>[] = [];
-        
-        for (let i = 0; i < chapterImages.length; i++) {
-          const image = chapterImages[i];
-          
-          if (image.file) {
-            // New image - upload directly to R2 with client-side WebP conversion
-            const timestamp = Date.now();
-            const cleanFileName = image.file.name.replace(/[^a-zA-Z0-9.-]/g, '_');
-            const imagePath = `mangas/${mangaId}/chapters/${chapterNumber}/${timestamp}-page-${i + 1}-${cleanFileName}`;
-            
-            const uploadPromise = uploadImageDirectToR2(
-              image.file,
-              imagePath,
-              token
-            ).then(publicUrl => ({
-              index: i,
-              originalUrl: image.url,
-              publicUrl: publicUrl
-            }))
-            .catch(error => ({
-              index: i,
-              originalUrl: image.url,
-              error: error instanceof Error ? error.message : "Upload failed"
-            }));
-            
-            uploadPromises.push(uploadPromise);
-          }
-        }
-
-        const results = await Promise.allSettled(uploadPromises);
-        
-        toast.dismiss(uploadToast);
-
-        // Process results
-        const successful = results
-          .filter((r): r is PromiseFulfilledResult<{ index: number; originalUrl: string; publicUrl: string }> => 
-            r.status === 'fulfilled' && 'publicUrl' in r.value && !!r.value.publicUrl
-          )
-          .map(r => r.value);
-        
-        const failed = results
-          .filter(r => 
-            r.status === 'rejected' || 
-            (r.status === 'fulfilled' && (!('publicUrl' in r.value) || !r.value.publicUrl))
-          )
-          .map((r, i) => i + 1);
-
-        if (failed.length > 0 && successful.length === 0) {
-          toast.error("All new uploads failed", {
-            description: "Please check your internet connection and try again"
-          });
-          setLoading(false);
-          return;
-        }
-
-        if (failed.length > 0) {
-          toast.warning(`Some uploads failed`, {
-            description: `Failed to upload ${failed.length} images. ${successful.length} succeeded.`
-          });
-        }
-
-        // Build final image URLs list (mix of existing and new)
-        const finalImageUrls: string[] = [];
-        
-        for (let i = 0; i < chapterImages.length; i++) {
-          const image = chapterImages[i];
-          
-          if (image.file) {
-            // Find uploaded URL for this image
-            const uploaded = successful.find(s => s.index === i);
-            if (uploaded && uploaded.publicUrl) {
-              finalImageUrls.push(uploaded.publicUrl);
-            }
-          } else {
-            // Existing image - keep URL
-            finalImageUrls.push(image.url);
-          }
-        }
-
-        // Save updated image URLs
-        const saveImagesResponse = await saveChapterImages(
-          {
-            mangaId,
-            chapterId,
-            images: finalImageUrls,
-          },
-          token
-        );
-
-        if (saveImagesResponse.error) {
-          toast.error("Failed to save updated images", {
-            description: saveImagesResponse.message,
-          });
-          setLoading(false);
-          return;
-        }
-
-        toast.success("Chapter updated successfully", {
-          description: `Chapter ${chapterNumber} with ${finalImageUrls.length} pages has been updated`,
-        });
-
-      } else {
-        // No new images, just reorder/delete
-        const finalImageUrls = chapterImages.map(img => img.url);
-
-        const saveImagesResponse = await saveChapterImages(
-          {
-            mangaId,
-            chapterId,
-            images: finalImageUrls,
-          },
-          token
-        );
-
-        if (saveImagesResponse.error) {
-          toast.dismiss(loadingToast);
-          toast.error("Failed to save changes", {
-            description: saveImagesResponse.message,
-          });
-          setLoading(false);
-          return;
-        }
-
-        toast.dismiss(loadingToast);
-        toast.success("Chapter updated successfully", {
-          description: `Chapter ${chapterNumber} with ${finalImageUrls.length} pages`,
-        });
-      }
+      toast.success("Хадгалагдлаа", {
+        id: toastId,
+        description: `Бүлэг ${parsedNumber}, ${finalImageUrls.length} хуудас`,
+      });
 
       router.push(`/projects/chapters/${mangaId}`);
-
     } catch (error) {
       console.error("Error updating chapter:", error);
-      toast.error("An unexpected error occurred", {
-        description: error instanceof Error ? error.message : "Unknown error"
+      toast.error("Алдаа гарлаа", {
+        id: toastId,
+        description: error instanceof Error ? error.message : undefined,
       });
     } finally {
       setLoading(false);
@@ -267,117 +204,100 @@ export default function EditChapterForm({
   };
 
   return (
-    <div className="min-h-screen bg-zinc-900 p-6">
-      <div className="max-w-2xl mx-auto">
-        <div className="bg-zinc-800/30 backdrop-blur-xl border border-zinc-700/50 rounded-2xl overflow-hidden shadow-2xl">
-          {/* Header */}
-          <div className="bg-zinc-800/50 px-6 py-4 border-b border-zinc-700/50">
-            <div className="flex items-center gap-4">
-              <Button
-                type="button"
-                onClick={() => router.push(`/projects/chapters/${mangaId}`)}
-                className="bg-zinc-700 hover:bg-zinc-600 text-white p-2 rounded-lg"
-              >
-                <ArrowLeft className="w-4 h-4" />
-              </Button>
-              <div>
-                <h1 className="text-2xl font-bold text-white">Бүлэг засварлах</h1>
-                <p className="text-zinc-400 text-sm mt-1">{mangaTitle}</p>
-              </div>
-            </div>
-          </div>
-
-          {/* Form */}
-          <div className="p-6">
-            <form onSubmit={handleSubmit} className="space-y-6">
-              {/* Chapter Number */}
-              <div className="space-y-2">
-                <Label htmlFor="chapterNumber" className="text-sm font-semibold text-zinc-300 uppercase tracking-wider">
-                  Бүлгийн дугаар
-                </Label>
-                <Input
-                  id="chapterNumber"
-                  type="number"
-                  min="1"
-                  value={chapterNumber}
-                  onChange={(e) => setChapterNumber(parseInt(e.target.value) || 1)}
-                  placeholder="Enter chapter number"
-                  required
-                  disabled={loading}
-                  className="bg-zinc-800/50 border-zinc-600/50 text-white placeholder-zinc-400 focus:border-cyan-400 focus:ring-cyan-400 rounded-lg h-12"
-                />
-                {chapterNumber !== currentChapterNumber && (
-                  <div className="flex items-start gap-2 bg-yellow-500/10 border border-yellow-500/20 rounded-lg p-3">
-                    <div className="text-yellow-400 text-xs flex-shrink-0 mt-0.5">⚠️</div>
-                    <p className="text-yellow-300 text-sm">
-                      Бүлэг {currentChapterNumber} -ээс {chapterNumber} болж өөрчлөгдөж байна
-                    </p>
-                  </div>
-                )}
-              </div>
-
-              {/* Chapter Images */}
-              <div className="space-y-2">
-                <Label className="text-sm font-semibold text-zinc-300 uppercase tracking-wider">
-                  Бүлгийн зурагнууд
-                </Label>
-                <div className="bg-zinc-800/30 backdrop-blur-sm rounded-lg border border-zinc-600/50 p-4">
-                  <MultiImageUploader
-                    images={chapterImages}
-                    onImagesChange={setChapterImages}
-                    label="Хуудасны зураг нэмэх"
-                  />
-                </div>
-                
-                {/* Info messages */}
-                {chapterImages.length > 0 && (
-                  <div className="space-y-2">
-                    {/* WebP conversion notice */}
-                    {chapterImages.some(img => img.file) && (
-                      <div className="flex items-start gap-2 bg-cyan-500/10 border border-cyan-500/20 rounded-lg p-3">
-                        <div className="text-cyan-400 text-xs flex-shrink-0 mt-0.5">ℹ️</div>
-                        <div className="text-xs text-cyan-300">
-                          Таны browser дээр WebP болгож хөрвүүлнэ (Vercel bandwidth хэмнэнэ).
-                        </div>
-                      </div>
-                    )}
-                    
-                    {/* Image count */}
-                    <p className="text-sm text-zinc-400">
-                      {chapterImages.length} зураг байна
-                      {chapterImages.some(img => img.file) && (
-                        <span className="text-cyan-400 ml-2">
-                          ({chapterImages.filter(img => img.file).length} шинэ)
-                        </span>
-                      )}
-                    </p>
-                  </div>
-                )}
-              </div>
-
-              {/* Submit Button */}
-              <div className="pt-4">
-                <Button
-                  type="submit"
-                  disabled={loading || !chapterNumber || chapterImages.length === 0}
-                  className="w-full bg-zinc-800 hover:bg-cyan-600 text-white px-6 py-3 rounded-xl font-semibold text-lg shadow-lg hover:shadow-xl transition-all duration-300 border-0 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
-                >
-                  {loading ? (
-                    <div className="flex items-center">
-                      <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white mr-2"></div>
-                      Хадгалж байна...
-                    </div>
-                  ) : (
-                    <>
-                      <SaveIcon className="w-5 h-5 mr-2" />
-                      Хадгалах
-                    </>
-                  )}
-                </Button>
-              </div>
-            </form>
+    <div className="cyber-bg min-h-screen w-full p-4 sm:p-6">
+      <div className="relative z-10 mx-auto max-w-5xl space-y-6">
+        {/* Header */}
+        <div className="flex items-center gap-4">
+          <Link
+            href={`/projects/chapters/${mangaId}`}
+            aria-label="Буцах"
+            className="cyber-btn p-2.5"
+          >
+            <ArrowLeft className="h-4 w-4" />
+          </Link>
+          <div className="min-w-0">
+            <h1 className="font-display text-2xl font-bold text-white">Бүлэг засварлах</h1>
+            <p className="truncate text-sm text-zinc-400" title={mangaTitle}>
+              {mangaTitle}
+            </p>
           </div>
         </div>
+
+        <form onSubmit={handleSubmit}>
+          {/* fieldset disabled: хадгалж байх үед бүх талбар, товчийг хаана */}
+          <fieldset
+            disabled={loading}
+            className="m-0 grid min-w-0 gap-6 border-0 p-0 lg:grid-cols-[280px_minmax(0,1fr)]"
+          >
+            {/* Зүүн: дугаар, тоо, хадгалах. Урт жагсаалттай үед ч товч харагдсан хэвээр */}
+            <div className="cyber-panel space-y-5 p-5 lg:sticky lg:top-6 lg:self-start">
+              <div className="space-y-2">
+                <label htmlFor="chapterNumber" className="text-sm font-medium text-zinc-300">
+                  Бүлгийн дугаар
+                </label>
+                <input
+                  id="chapterNumber"
+                  type="text"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  value={chapterNumber}
+                  onChange={handleChapterNumberChange}
+                  required
+                  className="font-display w-full border border-white/10 bg-black/30 px-3 py-3 text-2xl font-bold tabular-nums text-[#00f0ff] focus:border-[#00f0ff]/60 focus:outline-none focus:ring-1 focus:ring-[#00f0ff]/40 disabled:opacity-50"
+                />
+                {numberChanged && (
+                  <p className="font-display text-sm tabular-nums text-[#ffd23f]">
+                    {currentChapterNumber} → {parsedNumber}
+                  </p>
+                )}
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div className="cyber-panel cyber-stat px-3 py-2">
+                  <p className="text-xs text-zinc-400">Хуудас</p>
+                  <p className="cyber-glow font-display text-2xl font-bold tabular-nums">
+                    {chapterImages.length}
+                  </p>
+                </div>
+                <div
+                  className="cyber-panel cyber-stat px-3 py-2"
+                  style={{ "--accent": "#3ddc97" } as CSSProperties}
+                >
+                  <p className="text-xs text-zinc-400">Шинэ</p>
+                  <p className="cyber-glow font-display text-2xl font-bold tabular-nums">{newImageCount}</p>
+                </div>
+              </div>
+
+              <button
+                type="submit"
+                disabled={loading || !numberValid || chapterImages.length === 0}
+                className="cyber-btn flex w-full items-center justify-center gap-2 px-6 py-3 text-base font-semibold"
+                style={{ borderColor: "rgba(0,240,255,0.6)", backgroundColor: "rgba(0,240,255,0.15)" }}
+              >
+                {loading ? (
+                  <>
+                    <span className="h-5 w-5 animate-spin rounded-full border-2 border-[#00f0ff] border-b-transparent" />
+                    Хадгалж байна...
+                  </>
+                ) : (
+                  <>
+                    <SaveIcon className="h-5 w-5" />
+                    Хадгалах
+                  </>
+                )}
+              </button>
+            </div>
+
+            {/* Баруун: зургууд */}
+            <div className="cyber-panel p-4">
+              <MultiImageUploader
+                images={chapterImages}
+                onImagesChange={setChapterImages}
+                label="Хуудасны зураг нэмэх"
+              />
+            </div>
+          </fieldset>
+        </form>
       </div>
     </div>
   );

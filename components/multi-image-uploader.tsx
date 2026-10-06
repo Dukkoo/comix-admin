@@ -1,7 +1,6 @@
 "use client";
 
-import { useCallback, useRef } from "react";
-import { Button } from "./ui/button";
+import { useCallback, useRef, useState } from "react";
 import {
   DragDropContext,
   Draggable,
@@ -9,8 +8,8 @@ import {
   DropResult,
 } from "@hello-pangea/dnd";
 import Image from "next/image";
-import { Badge } from "./ui/badge";
-import { MoveIcon, XIcon, Upload, Plus } from "lucide-react";
+import { GripVertical, XIcon, Upload, Plus } from "lucide-react";
+import { toast } from "sonner";
 
 export type ImageUpload = {
   id: string;
@@ -26,39 +25,51 @@ type Props = {
   label?: string;
 };
 
+const MAX_SIZE = 50 * 1024 * 1024; // 50MB
+const ACCEPTED_TYPES = ["image/png", "image/jpeg", "image/jpg", "image/webp", "image/gif"];
+
 export default function MultiImageUploader({
   images = [],
   onImagesChange,
   urlFormatter,
-  label = "Upload Chapter Images",
+  label = "Зураг нэмэх",
 }: Props) {
   const uploadInputRef = useRef<HTMLInputElement | null>(null);
+  const [dragOver, setDragOver] = useState(false);
 
-      const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-      const files = Array.from(e.target.files || []);
-      
-      // File size check (50MB max)
-      const maxSize = 50 * 1024 * 1024; // 50MB
-      const invalidFiles = files.filter(f => f.size > maxSize);
-      
-      // If any file is too large, stop processing
-      if (invalidFiles.length > 0) {
-        return;
-      }
-      
-      const newImages = files.map((file, index) => {
-        const previewUrl = URL.createObjectURL(file);
-        return {
-          id: `${Date.now()}-${index}-${file.name}`,
-          url: previewUrl,
-          preview: previewUrl,
-          file,
-        };
-      });
+  const addFiles = (files: File[]) => {
+    if (files.length === 0) return;
 
-      onImagesChange([...images, ...newImages]);
-    };
+    // Хэт том эсвэл зураг биш файлыг алгасаад, бусдыг нь нэмнэ
+    // (өмнө нь нэг файл том бол бүгд чимээгүй хаягддаг байсан)
+    const accepted = files.filter((file) => ACCEPTED_TYPES.includes(file.type) && file.size <= MAX_SIZE);
+    const skipped = files.length - accepted.length;
 
+    if (skipped > 0) {
+      toast.error(`${skipped} файл алгасагдлаа (PNG, JPG, GIF, WebP, 50MB хүртэл)`);
+    }
+
+    if (accepted.length === 0) return;
+
+    const newImages: ImageUpload[] = accepted.map((file, index) => {
+      const previewUrl = URL.createObjectURL(file);
+      return {
+        id: `${Date.now()}-${index}-${Math.random().toString(36).slice(2, 7)}-${file.name}`,
+        url: previewUrl,
+        preview: previewUrl,
+        file,
+      };
+    });
+
+    onImagesChange([...images, ...newImages]);
+  };
+
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    addFiles(Array.from(e.target.files || []));
+    e.target.value = ""; // ижил файлуудыг дахин сонгох боломжтой байлгана
+  };
+
+  const openPicker = () => uploadInputRef.current?.click();
 
   const handleDragEnd = useCallback(
     (result: DropResult) => {
@@ -76,8 +87,9 @@ export default function MultiImageUploader({
 
   const handleDelete = useCallback(
     (id: string) => {
-      const updatedImages = images.filter((image) => image.id !== id);
-      onImagesChange(updatedImages);
+      const removed = images.find((image) => image.id === id);
+      if (removed?.preview) URL.revokeObjectURL(removed.preview);
+      onImagesChange(images.filter((image) => image.id !== id));
     },
     [onImagesChange, images]
   );
@@ -92,29 +104,52 @@ export default function MultiImageUploader({
         accept="image/png,image/jpeg,image/jpg,image/webp,image/gif"
         onChange={handleInputChange}
       />
-      
-      {/* Upload Button */}
-      <div 
-        className="relative border-2 border-dashed border-zinc-600/50 rounded-xl p-8 text-center hover:border-cyan-400/50 transition-all duration-300 cursor-pointer bg-zinc-800/50 backdrop-blur-sm mb-4"
-        onClick={() => uploadInputRef?.current?.click()}
+
+      {/* Зураг оруулах талбар (файлаа энд чирж оруулж болно) */}
+      <div
+        role="button"
+        tabIndex={0}
+        aria-label={label}
+        onClick={openPicker}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            openPicker();
+          }
+        }}
+        onDragOver={(e) => {
+          e.preventDefault();
+          setDragOver(true);
+        }}
+        onDragLeave={() => setDragOver(false)}
+        onDrop={(e) => {
+          e.preventDefault();
+          setDragOver(false);
+          addFiles(Array.from(e.dataTransfer.files));
+        }}
+        className={`flex cursor-pointer flex-col items-center justify-center gap-2 border border-dashed px-4 py-8 text-center transition-all focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#00f0ff] ${
+          dragOver
+            ? "border-[#00f0ff] bg-[#00f0ff]/10 shadow-[0_0_28px_rgba(0,240,255,0.25)]"
+            : "border-[#00f0ff]/30 bg-black/20 hover:border-[#00f0ff]/70 hover:bg-[#00f0ff]/5"
+        } ${images.length > 0 ? "mb-4" : ""}`}
       >
-        <div className="space-y-3">
-          <div className="w-16 h-16 mx-auto bg-gradient-to-br from-zinc-700 to-zinc-800 rounded-full flex items-center justify-center">
-            <Upload className="w-8 h-8 text-zinc-400" />
-          </div>
-          <div>
-            <p className="text-white font-medium">{label}</p>
-            <p className="text-zinc-500 text-xs mt-1">PNG, JPG, GIF, WebP up to 50MB each</p>
-          </div>
-        </div>
+        <Upload
+          className="h-9 w-9 text-[#00f0ff]"
+          style={{ filter: "drop-shadow(0 0 8px rgba(0,240,255,0.6))" }}
+        />
+        <p className="font-medium text-white">{label}</p>
       </div>
 
-      {/* Images List */}
+      {/* Зургуудын жагсаалт: чирж эрэмбэлнэ */}
       {images.length > 0 && (
         <DragDropContext onDragEnd={handleDragEnd}>
           <Droppable droppableId="chapter-images" direction="vertical">
             {(provided) => (
-              <div {...provided.droppableProps} ref={provided.innerRef} className="space-y-2">
+              <div
+                {...provided.droppableProps}
+                ref={provided.innerRef}
+                className="cyber-scroll max-h-[70vh] space-y-1.5 overflow-y-auto pr-1"
+              >
                 {images.map((image, index) => (
                   <Draggable key={image.id} draggableId={image.id} index={index}>
                     {(provided, snapshot) => (
@@ -122,54 +157,54 @@ export default function MultiImageUploader({
                         {...provided.draggableProps}
                         {...provided.dragHandleProps}
                         ref={provided.innerRef}
-                        className={`relative ${snapshot.isDragging ? 'z-50' : ''}`}
+                        className={`flex cursor-grab items-center gap-3 border bg-[#0b0e1c] p-2 transition-colors active:cursor-grabbing ${
+                          snapshot.isDragging
+                            ? "z-50 border-[#00f0ff]/70 shadow-[0_0_24px_rgba(0,240,255,0.25)]"
+                            : "border-white/10 hover:border-white/25"
+                        }`}
                       >
-                        <div className="bg-zinc-800/50 rounded-lg flex gap-4 items-center overflow-hidden border border-zinc-600/50 p-3 hover:bg-zinc-700/50 transition-all duration-200">
-                          {/* Image Preview - FIXED: Added sizes prop */}
-                          <div className="w-16 h-16 relative rounded-lg overflow-hidden border border-zinc-600/50">
-                            <Image
-                              src={urlFormatter ? urlFormatter(image) : image.url}
-                              alt={`Page ${index + 1}`}
-                              fill
-                              sizes="64px"
-                              className="object-cover"
-                            />
-                          </div>
-                          
-                          {/* Image Info */}
-                          <div className="flex-grow">
-                            <p className="text-sm font-medium text-white">
-                              Page {index + 1}
-                            </p>
-                            <div className="flex items-center space-x-2 mt-1">
-                              {index === 0 && (
-                                <Badge className="bg-cyan-500/20 text-cyan-400 border-cyan-500/30 text-xs">
-                                  First Page
-                                </Badge>
-                              )}
-                              <span className="text-xs text-zinc-400">
-                                {image.file ? `${(image.file.size / (1024 * 1024)).toFixed(2)} MB` : 'Uploaded'}
+                        <GripVertical className="h-4 w-4 shrink-0 text-zinc-500" />
+
+                        <span className="font-display w-7 shrink-0 text-center text-base font-bold tabular-nums text-[#00f0ff]">
+                          {index + 1}
+                        </span>
+
+                        <div className="relative h-12 w-12 shrink-0 overflow-hidden border border-white/10 bg-black/40">
+                          <Image
+                            src={urlFormatter ? urlFormatter(image) : image.url}
+                            alt={`Хуудас ${index + 1}`}
+                            fill
+                            sizes="48px"
+                            className="object-cover"
+                          />
+                        </div>
+
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-sm font-medium text-white">Хуудас {index + 1}</p>
+                          <div className="mt-0.5 flex items-center gap-2">
+                            {index === 0 && (
+                              <span className="border border-[#00f0ff]/40 bg-[#00f0ff]/10 px-1.5 py-0.5 text-[10px] font-medium leading-none text-[#00f0ff]">
+                                Эхний хуудас
                               </span>
-                            </div>
-                          </div>
-                          
-                          {/* Actions */}
-                          <div className="flex items-center space-x-2">
-                            <button
-                              type="button"
-                              className="text-red-400 hover:text-red-300 p-2 hover:bg-red-500/20 rounded-lg transition-colors cursor-pointer"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleDelete(image.id);
-                              }}
-                            >
-                              <XIcon className="w-4 h-4" />
-                            </button>
-                            <div className="text-zinc-400 p-2 cursor-grab active:cursor-grabbing">
-                              <MoveIcon className="w-4 h-4" />
-                            </div>
+                            )}
+                            <span className="text-xs tabular-nums text-zinc-400">
+                              {image.file ? `${(image.file.size / (1024 * 1024)).toFixed(2)} MB` : "Хуулсан"}
+                            </span>
                           </div>
                         </div>
+
+                        <button
+                          type="button"
+                          aria-label={`Хуудас ${index + 1} хасах`}
+                          title="Хасах"
+                          className="flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center border border-[#ff2e88]/40 bg-[#ff2e88]/10 text-[#ff2e88] transition-colors hover:bg-[#ff2e88]/30 hover:text-white"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDelete(image.id);
+                          }}
+                        >
+                          <XIcon className="h-4 w-4" />
+                        </button>
                       </div>
                     )}
                   </Draggable>
@@ -181,17 +216,16 @@ export default function MultiImageUploader({
         </DragDropContext>
       )}
 
-      {/* Add More Button */}
+      {/* Нэмэх товч */}
       {images.length > 0 && (
-        <Button
+        <button
           type="button"
-          variant="outline"
-          className="w-full mt-4 bg-zinc-800/50 border-zinc-600/50 text-white hover:bg-zinc-700/50 hover:border-cyan-400/50 transition-all duration-300"
-          onClick={() => uploadInputRef?.current?.click()}
+          className="cyber-btn mt-4 flex w-full items-center justify-center gap-2 px-4 py-2.5 text-sm font-medium"
+          onClick={openPicker}
         >
-          <Plus className="w-4 h-4 mr-2" />
-          Add More Images
-        </Button>
+          <Plus className="h-4 w-4" />
+          Нэмэх
+        </button>
       )}
     </div>
   );

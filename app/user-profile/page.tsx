@@ -280,7 +280,6 @@ function AvatarSection() {
             style={{ filter: "drop-shadow(0 0 8px rgba(0,240,255,0.6))" }}
           />
           <p className="text-sm text-white">Зураг чирж оруулах эсвэл дарж сонгох</p>
-          <p className="text-xs text-zinc-500">5MB хүртэл</p>
         </div>
 
         {queue.length > 0 && (
