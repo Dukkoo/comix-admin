@@ -9,7 +9,8 @@ const firebaseConfig = {
   storageBucket: "comix-b9180.firebasestorage.app",
   messagingSenderId: "1038766459784",
   appId: "1:1038766459784:web:245c15521dea2f200b083d",
-  measurementId: "G-E98GPYDCL8"
+  measurementId: "G-E98GPYDCL8",
+  databaseURL: "https://comix-b9180-default-rtdb.asia-southeast1.firebasedatabase.app", // ← нэмэх
 };
 
 const currentApps = getApps();

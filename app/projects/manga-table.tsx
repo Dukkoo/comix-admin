@@ -1,10 +1,10 @@
 // app/projects/manga-table.tsx
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, type CSSProperties } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Edit2, Plus, Trash2, Search, X, BookOpen } from "lucide-react";
+import { Edit2, Plus, Trash2, Search, X, BookOpen, Eye } from "lucide-react";
 import { toast } from "sonner";
 import {
   Dialog,
@@ -56,6 +56,12 @@ const categoryText = (manga: Manga) => {
     .toLowerCase();
 };
 
+const formatCount = (n: number) => {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+  return String(n);
+};
+
 const matchesSearch = (manga: Manga, q: string) =>
   !q || (manga.title || "").toLowerCase().includes(q);
 
@@ -89,6 +95,11 @@ export default function MangaTable() {
   const [allMangas, setAllMangas] = useState<Manga[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [readCounts, setReadCounts] = useState<Record<string, number> | null>(null);
+  const [readDetail, setReadDetail] = useState<{ id: string; title: string } | null>(null);
+  const [readStats, setReadStats] = useState<{ reads: number; readers: number; capped: boolean } | null>(null);
+  const [readStatsLoading, setReadStatsLoading] = useState(false);
+  const [readStatsError, setReadStatsError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [deleting, setDeleting] = useState(false);
   const [deleteDialog, setDeleteDialog] = useState({
@@ -113,6 +124,36 @@ export default function MangaTable() {
   useEffect(() => {
     load();
   }, []);
+
+  // Манга бүрийн уншсан тоог (client-ийн "нэг хэрэглэгч нэг бүлэг нэг удаа" тэмдэглэгээнээс) татна
+  const mangaIdKey = allMangas.map((m) => m.id).join(",");
+  const currentUid = auth?.currentUser?.uid;
+  useEffect(() => {
+    if (!mangaIdKey || !currentUid) return;
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const token = await auth?.currentUser?.getIdToken();
+        if (!token) return;
+
+        const response = await fetch(`/api/admin/read-counts?ids=${encodeURIComponent(mangaIdKey)}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+        const data = await response.json();
+        if (!cancelled) setReadCounts(data.counts || {});
+      } catch (error) {
+        console.warn("[readCounts] татаж чадсангүй:", error);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mangaIdKey, currentUid]);
 
   // Романс гэсэн төрөлтэй ном = Романс, бусад бүгд = Адал явдалт
   const romanceIds = useMemo(() => {
@@ -166,6 +207,31 @@ export default function MangaTable() {
 
   const changeTab = (next: TabKey) => {
     router.replace(next === "adventure" ? BASE_PATH : `${BASE_PATH}?tab=${next}`);
+  };
+
+  // Уншсан тоо дээр дарахад: хэдэн хүн уншсан, нийт хэдэн уншилт
+  const openReadDetail = async (manga: Manga) => {
+    setReadDetail({ id: manga.id, title: manga.title });
+    setReadStats(null);
+    setReadStatsError(null);
+    setReadStatsLoading(true);
+
+    try {
+      const token = await auth?.currentUser?.getIdToken();
+      if (!token) throw new Error("Нэвтрээгүй байна");
+
+      const response = await fetch(`/api/admin/read-counts?mangaId=${encodeURIComponent(manga.id)}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+
+      setReadStats({ reads: data.reads, readers: data.readers, capped: Boolean(data.capped) });
+    } catch (error) {
+      setReadStatsError(error instanceof Error ? error.message : "Алдаа гарлаа");
+    } finally {
+      setReadStatsLoading(false);
+    }
   };
 
   const showDeleteDialog = (mangaId: string, title: string) => {
@@ -392,6 +458,34 @@ export default function MangaTable() {
                         </span>
                         <span className="text-[10px] font-medium leading-none text-white">бүлэг</span>
                       </div>
+
+                      {/* Уншсан тоо (өвөрмөц хэрэглэгч x бүлэг; тоо ирээгүй бол харагдахгүй) */}
+                      {readCounts !== null && readCounts[manga.id] !== undefined && (
+                        <span
+                          role="button"
+                          tabIndex={0}
+                          aria-label={`${manga.title}: уншсан хүний дэлгэрэнгүй`}
+                          title="Хэдэн хүн уншсаныг харах"
+                          onClick={(e) => {
+                            e.preventDefault(); // карт нь бүлгүүд рүү очдог линк тул зогсооно
+                            e.stopPropagation();
+                            openReadDetail(manga);
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" || e.key === " ") {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              openReadDetail(manga);
+                            }
+                          }}
+                          className="absolute bottom-1 right-1 flex cursor-pointer items-center gap-1 border border-[#ff2e88]/60 bg-black/85 px-1.5 py-1 shadow-[0_0_10px_rgba(255,46,136,0.3)] backdrop-blur-sm transition-colors hover:bg-black"
+                        >
+                          <Eye className="h-3 w-3 text-[#ff2e88]" />
+                          <span className="font-display text-sm font-extrabold leading-none tabular-nums text-[#ff2e88]">
+                            {formatCount(readCounts[manga.id])}
+                          </span>
+                        </span>
+                      )}
                     </div>
 
                     <h3
@@ -459,6 +553,51 @@ export default function MangaTable() {
               {deleting ? "Устгаж байна..." : "Устгах"}
             </button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Уншсан хүний дэлгэрэнгүй */}
+      <Dialog
+        open={readDetail !== null}
+        onOpenChange={(open) => {
+          if (!open) setReadDetail(null);
+        }}
+      >
+        <DialogContent className="border border-[#ff2e88]/40 bg-[#0b0e1c] text-white">
+          <DialogHeader>
+            <DialogTitle className="font-display truncate">{readDetail?.title}</DialogTitle>
+            <DialogDescription className="sr-only">Уншсан хэрэглэгчийн болон нийт уншилтын тоо</DialogDescription>
+          </DialogHeader>
+
+          {readStatsLoading ? (
+            <div className="flex justify-center py-8">
+              <span className="loader"></span>
+            </div>
+          ) : readStatsError ? (
+            <p className="py-4 text-center text-sm text-[#ff2e88]">{readStatsError}</p>
+          ) : (
+            readStats && (
+              <div className="grid grid-cols-2 gap-3">
+                <div className="cyber-panel cyber-stat px-4 py-3">
+                  <p className="text-xs text-zinc-400">Уншсан хүн</p>
+                  <p className="cyber-glow font-display text-3xl font-bold tabular-nums">
+                    {readStats.readers.toLocaleString()}
+                    {readStats.capped && "+"}
+                  </p>
+                </div>
+                <div
+                  className="cyber-panel cyber-stat px-4 py-3"
+                  style={{ "--accent": "#ff2e88" } as CSSProperties}
+                >
+                  <p className="text-xs text-zinc-400">Нийт уншилт</p>
+                  <p className="cyber-glow font-display text-3xl font-bold tabular-nums">
+                    {readStats.reads.toLocaleString()}
+                    {readStats.capped && "+"}
+                  </p>
+                </div>
+              </div>
+            )
+          )}
         </DialogContent>
       </Dialog>
     </div>

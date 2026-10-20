@@ -15,12 +15,14 @@ import {
   BarChart3,
   BookOpen,
   RefreshCw,
+  Activity,
   PieChart as PieChartIcon,
 } from 'lucide-react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts';
 import { useAuth } from '@/app/providers';
 import { toast } from 'sonner';
 import SubscriptionDetailsModal from './SubscriptionDetailsModal';
+import { useOnlineCount } from '@/lib/use-online-count';
 
 interface StatCard {
   title: string;
@@ -28,6 +30,7 @@ interface StatCard {
   icon: ComponentType<{ className?: string; style?: CSSProperties }>;
   color: string;
   clickable?: boolean;
+  live?: boolean;
 }
 
 interface AnalyticsData {
@@ -50,14 +53,17 @@ const NEON = {
   magenta: '#ff2e88',
   violet: '#8b6cff',
   amber: '#ffd23f',
+  mint: '#3ddc97',
   dim: '#2b2f52',
 };
 
 function DashboardStats({
   data,
+  online,
   onSubscriptionClick,
 }: {
   data: AnalyticsData;
+  online: number | null;
   onSubscriptionClick: () => void;
 }) {
   const stats: StatCard[] = [
@@ -66,6 +72,13 @@ function DashboardStats({
       value: (data.stats.totalUsers || 0).toLocaleString(),
       icon: Users,
       color: NEON.cyan,
+    },
+    {
+      title: 'Одоо онлайн',
+      value: online === null ? '—' : online.toLocaleString(),
+      icon: Activity,
+      color: NEON.mint,
+      live: true,
     },
     {
       title: 'Яг одоо идэвхжүүлсэн хэрэглэгчийн тоо',
@@ -89,7 +102,7 @@ function DashboardStats({
   ];
 
   return (
-    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-5">
       {stats.map((stat) => {
         const Icon = stat.icon;
         const interactive = stat.clickable
@@ -120,6 +133,12 @@ function DashboardStats({
                 <p className="text-sm text-zinc-400">{stat.title}</p>
                 <p className="cyber-glow font-display mt-2 text-4xl font-bold tabular-nums">
                   {stat.value}
+                  {stat.live && stat.value !== '—' && (
+                    <span className="relative ml-2 inline-flex h-2.5 w-2.5 align-middle" aria-hidden>
+                      <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[#3ddc97] opacity-60 motion-reduce:animate-none" />
+                      <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-[#3ddc97]" />
+                    </span>
+                  )}
                 </p>
                 {stat.clickable && (
                   <p className="mt-2 text-xs font-medium" style={{ color: stat.color }}>
@@ -231,6 +250,7 @@ interface AnalyticsProps {
 
 export default function Analytics({ sidePanel, children }: AnalyticsProps) {
   const { currentUser, loading: authLoading } = useAuth();
+  const { count: onlineCount } = useOnlineCount();
   const [data, setData] = useState<AnalyticsData | null>(null);
   const [loading, setLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -312,7 +332,13 @@ export default function Analytics({ sidePanel, children }: AnalyticsProps) {
       );
     }
 
-    return <DashboardStats data={data} onSubscriptionClick={() => setIsModalOpen(true)} />;
+    return (
+      <DashboardStats
+        data={data}
+        online={onlineCount}
+        onSubscriptionClick={() => setIsModalOpen(true)}
+      />
+    );
   })();
 
   const pieArea = data ? (
