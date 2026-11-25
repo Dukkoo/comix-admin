@@ -3,7 +3,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Home, Users, BookOpen, LogOut, Layers, Receipt, UserCircle } from 'lucide-react';
+import { Home, Users, BookOpen, LogOut, Layers, Receipt, UserCircle, Ticket } from 'lucide-react';
 import { useAuth } from '@/app/providers';
 import { cn } from '@/lib/utils';
 
@@ -14,6 +14,7 @@ const navigation = [
   { name: 'Client удирдлага', href: '/client', icon: Layers },
   { name: 'Хэрэглэгчийн профайл', href: '/user-profile', icon: UserCircle },
   { name: 'Төлбөрийн бүртгэл', href: '/payments', icon: Receipt },
+  { name: 'Промо', href: '/promo', icon: Ticket },
 ];
 
 export default function Sidebar() {
