@@ -5,9 +5,11 @@ import {
   useState,
   useEffect,
   useCallback,
+  useRef,
   type ReactNode,
   type CSSProperties,
   type ComponentType,
+  type KeyboardEvent,
 } from 'react';
 import {
   Users,
@@ -31,6 +33,13 @@ interface StatCard {
   color: string;
   clickable?: boolean;
   live?: boolean;
+  subtitle?: string;
+}
+
+interface OnlineStats {
+  count: number | null;
+  users: number | null;
+  guests: number | null;
 }
 
 interface AnalyticsData {
@@ -47,6 +56,9 @@ interface AnalyticsData {
   weeklyData: Array<{ week: string; users: number }>;
 }
 
+// Tab нээлттэй байх үед статистикийг 1 минут тутам автоматаар шинэчилнэ
+const AUTO_REFRESH_MS = 60_000;
+
 // Cyberpunk палитр
 const NEON = {
   cyan: '#00f0ff',
@@ -57,45 +69,53 @@ const NEON = {
   dim: '#2b2f52',
 };
 
+const toNum = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
+const fmtOrDash = (v: number | null) => (v === null ? '—' : v.toLocaleString());
+
 function DashboardStats({
   data,
   online,
   onSubscriptionClick,
 }: {
   data: AnalyticsData;
-  online: number | null;
+  online: OnlineStats;
   onSubscriptionClick: () => void;
 }) {
   const stats: StatCard[] = [
     {
       title: 'Нийт хэрэглэгч',
-      value: (data.stats.totalUsers || 0).toLocaleString(),
+      value: toNum(data.stats?.totalUsers).toLocaleString(),
       icon: Users,
       color: NEON.cyan,
     },
     {
       title: 'Одоо онлайн',
-      value: online === null ? '—' : online.toLocaleString(),
+      value: fmtOrDash(online.count),
       icon: Activity,
       color: NEON.mint,
       live: true,
+      // Нэвтэрсэн / зочин задаргаа
+      subtitle:
+        online.count === null
+          ? undefined
+          : `Нэвтэрсэн ${fmtOrDash(online.users)} · Зочин ${fmtOrDash(online.guests)}`,
     },
     {
       title: 'Яг одоо идэвхжүүлсэн хэрэглэгчийн тоо',
-      value: (data.stats.subscribedUsers || 0).toLocaleString(),
+      value: toNum(data.stats?.subscribedUsers).toLocaleString(),
       icon: CreditCard,
       color: NEON.magenta,
       clickable: true,
     },
     {
       title: 'Нийт зурагт ном',
-      value: (data.stats.totalMangas || 0).toLocaleString(),
+      value: toNum(data.stats?.totalMangas).toLocaleString(),
       icon: BookOpen,
       color: NEON.violet,
     },
     {
       title: 'Нийт бүлэг',
-      value: (data.stats.totalChapters || 0).toLocaleString(),
+      value: toNum(data.stats?.totalChapters).toLocaleString(),
       icon: BarChart3,
       color: NEON.amber,
     },
@@ -109,8 +129,9 @@ function DashboardStats({
           ? {
               role: 'button' as const,
               tabIndex: 0,
+              'aria-label': `${stat.title} — дэлгэрэнгүй харах`,
               onClick: onSubscriptionClick,
-              onKeyDown: (e: React.KeyboardEvent) => {
+              onKeyDown: (e: KeyboardEvent<HTMLDivElement>) => {
                 if (e.key === 'Enter' || e.key === ' ') {
                   e.preventDefault();
                   onSubscriptionClick();
@@ -140,6 +161,9 @@ function DashboardStats({
                     </span>
                   )}
                 </p>
+                {stat.subtitle && (
+                  <p className="mt-2 text-xs text-zinc-400 tabular-nums">{stat.subtitle}</p>
+                )}
                 {stat.clickable && (
                   <p className="mt-2 text-xs font-medium" style={{ color: stat.color }}>
                     Дэлгэрэнгүй харах
@@ -155,10 +179,26 @@ function DashboardStats({
   );
 }
 
-function SubscriptionPieChart({ data }: { data: AnalyticsData['pieData'] }) {
-  const total = data.reduce((sum, entry) => sum + entry.value, 0);
-  const subscribedPercentage = total > 0 ? Math.round(((data[0]?.value ?? 0) / total) * 100) : 0;
-  const colors = [NEON.cyan, NEON.dim];
+// pieData-ийн дарааллаас хамаарахгүйн тулд stats-аас шууд тооцно
+function SubscriptionPieChart({
+  subscribed,
+  notSubscribed,
+}: {
+  subscribed: number;
+  notSubscribed: number;
+}) {
+  const total = subscribed + notSubscribed;
+  const subscribedPercentage = total > 0 ? Math.round((subscribed / total) * 100) : 0;
+  const hasData = total > 0;
+
+  const chartData = hasData
+    ? [
+        { name: 'Идэвхжүүлсэн', value: subscribed, color: NEON.cyan },
+        { name: 'Идэвхжүүлээгүй', value: notSubscribed, color: NEON.dim },
+      ]
+    : [{ name: 'Мэдээлэл алга', value: 1, color: NEON.dim }];
+
+  const bothNonZero = subscribed > 0 && notSubscribed > 0;
 
   return (
     <div className="cyber-panel flex h-full flex-col p-5">
@@ -171,47 +211,50 @@ function SubscriptionPieChart({ data }: { data: AnalyticsData['pieData'] }) {
         <ResponsiveContainer width="100%" height="100%">
           <PieChart>
             <Pie
-              data={data}
+              data={chartData}
               cx="50%"
               cy="50%"
               innerRadius="62%"
               outerRadius="88%"
-              paddingAngle={4}
+              paddingAngle={bothNonZero ? 4 : 0}
               dataKey="value"
               animationBegin={0}
               animationDuration={800}
               stroke="none"
+              isAnimationActive={hasData}
             >
-              {data.map((entry, index) => (
+              {chartData.map((entry, index) => (
                 <Cell
-                  key={`cell-${index}`}
-                  fill={colors[index] ?? entry.color}
+                  key={`cell-${entry.name}`}
+                  fill={entry.color}
                   stroke="none"
                   style={
-                    index === 0
+                    hasData && index === 0
                       ? { filter: 'drop-shadow(0 0 6px rgba(0,240,255,0.6))' }
                       : undefined
                   }
                 />
               ))}
             </Pie>
-            <Tooltip
-              contentStyle={{
-                backgroundColor: '#0a0d18',
-                border: '1px solid rgba(0,240,255,0.4)',
-                borderRadius: '2px',
-                color: '#f4f4f5',
-              }}
-              itemStyle={{ color: '#f4f4f5' }}
-              formatter={(value: any, name: any) => [Number(value).toLocaleString(), name]}
-            />
+            {hasData && (
+              <Tooltip
+                contentStyle={{
+                  backgroundColor: '#0a0d18',
+                  border: '1px solid rgba(0,240,255,0.4)',
+                  borderRadius: '2px',
+                  color: '#f4f4f5',
+                }}
+                itemStyle={{ color: '#f4f4f5' }}
+                formatter={(value: any, name: any) => [Number(value).toLocaleString(), name]}
+              />
+            )}
           </PieChart>
         </ResponsiveContainer>
 
         {/* Дугуйн голд идэвхжсэн хувь */}
         <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
           <span className="cyber-glow font-display text-3xl font-bold tabular-nums">
-            {subscribedPercentage}%
+            {hasData ? `${subscribedPercentage}%` : '—'}
           </span>
           <span className="text-xs text-zinc-400">идэвхжсэн</span>
         </div>
@@ -220,12 +263,15 @@ function SubscriptionPieChart({ data }: { data: AnalyticsData['pieData'] }) {
       <div className="mt-4 flex flex-wrap justify-center gap-x-5 gap-y-2">
         <div className="flex items-center gap-2">
           <span className="h-2.5 w-2.5" style={{ backgroundColor: NEON.cyan }} />
-          <span className="text-sm text-white">Идэвхжүүлсэн ({subscribedPercentage}%)</span>
+          <span className="text-sm text-white">
+            Идэвхжүүлсэн: {subscribed.toLocaleString()} ({subscribedPercentage}%)
+          </span>
         </div>
         <div className="flex items-center gap-2">
           <span className="h-2.5 w-2.5" style={{ backgroundColor: NEON.dim }} />
           <span className="text-sm text-white">
-            Идэвхжүүлээгүй ({total > 0 ? 100 - subscribedPercentage : 0}%)
+            Идэвхжүүлээгүй: {notSubscribed.toLocaleString()} (
+            {hasData ? 100 - subscribedPercentage : 0}%)
           </span>
         </div>
       </div>
@@ -248,9 +294,11 @@ interface AnalyticsProps {
   children?: ReactNode;
 }
 
+type FetchOptions = { force?: boolean; silent?: boolean };
+
 export default function Analytics({ sidePanel, children }: AnalyticsProps) {
   const { currentUser, loading: authLoading } = useAuth();
-  const { count: onlineCount } = useOnlineCount();
+  const { count: onlineCount, users: onlineUsers, guests: onlineGuests } = useOnlineCount();
   const [data, setData] = useState<AnalyticsData | null>(null);
   const [loading, setLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -258,55 +306,113 @@ export default function Analytics({ sidePanel, children }: AnalyticsProps) {
   const [error, setError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
 
-  // true = амжилттай, false = алдаа
-  const fetchAnalytics = useCallback(async (force = false): Promise<boolean> => {
-    if (!currentUser) {
-      setError('Нэвтэрч орно уу');
-      return false;
-    }
+  // Token шинэчлэгдэх бүрт currentUser-ийн reference өөрчлөгдөж дахин fetch хийхээс сэргийлнэ
+  const currentUserRef = useRef(currentUser);
+  currentUserRef.current = currentUser;
+  const uid = currentUser?.uid ?? null;
 
-    setError(null);
+  const mountedRef = useRef(true);
+  // Хамгийн сүүлд эхэлсэн хүсэлтийн хариуг л хэрэглэнэ (хуучин хариу шинийг дарахгүй)
+  const requestIdRef = useRef(0);
+  const lastFetchAtRef = useRef(0);
 
-    try {
-      const token = await currentUser.getIdToken();
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
-      const response = await fetch(`/api/admin/analytics${force ? '?refresh=1' : ''}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
-        throw new Error(errorData.error || `HTTP ${response.status}`);
+  // true = амжилттай, false = алдаа / хуучирсан хүсэлт
+  const fetchAnalytics = useCallback(
+    async ({ force = false, silent = false }: FetchOptions = {}): Promise<boolean> => {
+      const user = currentUserRef.current;
+      if (!user) {
+        setError('Нэвтэрч орно уу');
+        return false;
       }
 
-      const analyticsData = await response.json();
-      setData(analyticsData);
-      setLastUpdated(new Date());
-      return true;
-    } catch (err: any) {
-      console.error('Error fetching analytics:', err);
-      const errorMessage = err.message || 'Failed to load analytics data';
-      setError(errorMessage);
-      toast.error(errorMessage);
-      return false;
-    }
-  }, [currentUser]);
+      const requestId = ++requestIdRef.current;
+      const isCurrent = () => mountedRef.current && requestId === requestIdRef.current;
+
+      try {
+        const token = await user.getIdToken();
+
+        const response = await fetch(`/api/admin/analytics${force ? '?refresh=1' : ''}`, {
+          headers: { Authorization: `Bearer ${token}` },
+          cache: 'no-store',
+        });
+
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}));
+          throw new Error(errorData?.error || `HTTP ${response.status}`);
+        }
+
+        const analyticsData = (await response.json()) as AnalyticsData;
+        if (!isCurrent()) return false;
+
+        setData(analyticsData);
+        setError(null);
+        setLastUpdated(new Date());
+        lastFetchAtRef.current = Date.now();
+        return true;
+      } catch (err: unknown) {
+        if (!isCurrent()) return false;
+        console.error('Error fetching analytics:', err);
+        const errorMessage =
+          err instanceof Error && err.message ? err.message : 'Failed to load analytics data';
+        setError(errorMessage);
+        // Автомат шинэчлэлт дээр минут тутам toast гаргахгүй
+        if (!silent) toast.error(errorMessage);
+        return false;
+      }
+    },
+    []
+  );
 
   const handleRefresh = async () => {
     setRefreshing(true);
-    const ok = await fetchAnalytics(true);
-    setRefreshing(false);
+    const ok = await fetchAnalytics({ force: true });
+    if (mountedRef.current) setRefreshing(false);
     if (ok) toast.success('Мэдээлэл шинэчлэгдлээ');
   };
 
-  // Auth бэлэн болмогц нэг удаа татна
+  // Auth бэлэн болмогц (эсвэл өөр хэрэглэгчээр нэвтэрвэл) татна
   useEffect(() => {
     if (authLoading) return;
-    fetchAnalytics().finally(() => setLoading(false));
-  }, [authLoading, fetchAnalytics]);
+    let cancelled = false;
+    setLoading(true);
+    fetchAnalytics().finally(() => {
+      if (!cancelled) setLoading(false);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [authLoading, uid, fetchAnalytics]);
+
+  // Tab харагдаж байх үед автоматаар шинэчилнэ, буцаж ирэхэд хуучирсан бол шууд татна
+  useEffect(() => {
+    if (authLoading || !uid) return;
+
+    const refreshIfStale = () => {
+      if (document.visibilityState !== 'visible') return;
+      if (Date.now() - lastFetchAtRef.current < AUTO_REFRESH_MS - 1000) return;
+      fetchAnalytics({ silent: true });
+    };
+
+    const timer = window.setInterval(refreshIfStale, AUTO_REFRESH_MS);
+    document.addEventListener('visibilitychange', refreshIfStale);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener('visibilitychange', refreshIfStale);
+    };
+  }, [authLoading, uid, fetchAnalytics]);
+
+  const subscribed = toNum(data?.stats?.subscribedUsers);
+  const notSubscribed = Math.max(0, toNum(data?.stats?.totalUsers) - subscribed);
 
   const statsArea = (() => {
-    if (loading) return <LoadingSpinner />;
+    if (loading && !data) return <LoadingSpinner />;
 
     if (error && !data) {
       return (
@@ -335,14 +441,14 @@ export default function Analytics({ sidePanel, children }: AnalyticsProps) {
     return (
       <DashboardStats
         data={data}
-        online={onlineCount}
+        online={{ count: onlineCount, users: onlineUsers, guests: onlineGuests }}
         onSubscriptionClick={() => setIsModalOpen(true)}
       />
     );
   })();
 
   const pieArea = data ? (
-    <SubscriptionPieChart data={data.pieData} />
+    <SubscriptionPieChart subscribed={subscribed} notSubscribed={notSubscribed} />
   ) : (
     <div className="cyber-panel flex min-h-60 items-center justify-center p-5">
       {loading ? (
@@ -357,7 +463,12 @@ export default function Analytics({ sidePanel, children }: AnalyticsProps) {
     <>
       <div className="space-y-6">
         {/* Шинэчлэх товч */}
-        <div className="flex items-center justify-end gap-3">
+        <div className="flex flex-wrap items-center justify-end gap-3">
+          {error && data && (
+            <span className="text-xs" style={{ color: NEON.magenta }}>
+              Сүүлийн шинэчлэлт амжилтгүй болсон
+            </span>
+          )}
           {lastUpdated && (
             <span className="text-xs text-zinc-500">
               Сүүлд шинэчлэгдсэн:{' '}
