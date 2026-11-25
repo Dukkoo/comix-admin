@@ -18,14 +18,15 @@ import { useAuth } from "@/app/providers";
  * count === null -> ачаалж байна, эсвэл Realtime Database тохируулаагүй / эрх байхгүй (error === true)
  */
 
-// Client 3 минут тутам цагаа шинэчилдэг. Үүнээс удаан шинэчлэгдээгүй бичлэгийг тоолохгүй.
-const STALE_MS = 10 * 60 * 1000;
-// Үүнээс хуучин бичлэгийг (onDisconnect ажиллаагүй, эсвэл хуурамч) өгөгдлийн сангаас устгана
-const PURGE_AFTER_MS = 30 * 60 * 1000;
-const PURGE_INTERVAL_MS = 10 * 60 * 1000;
+// Client 1 минут тутам цагаа шинэчилдэг. 2.5 минутаас удаан шинэчлэгдээгүй бичлэгийг тоолохгүй
+// (утас арын хэсэгт орохдоо устгах хүсэлтээ илгээж амжаагүй тохиолдолд ч удалгүй хасагдана).
+const STALE_MS = 150 * 1000;
+// Үүнээс хуучин бичлэгийг өгөгдлийн сангаас устгана
+const PURGE_AFTER_MS = 10 * 60 * 1000;
+const PURGE_INTERVAL_MS = 5 * 60 * 1000;
 const MAX_PURGE_PER_RUN = 500;
 // Шинэ event ирээгүй ч бичлэгүүд хуучирдаг тул тоог тогтмол дахин тооцно
-const RECOUNT_INTERVAL_MS = 30 * 1000;
+const RECOUNT_INTERVAL_MS = 15 * 1000;
 
 type PresenceTree = Record<string, unknown> | null;
 
@@ -61,13 +62,14 @@ function countTree(
 
     let fresh = 0;
     for (const [connectionId, value] of Object.entries(conns as Record<string, unknown>)) {
-      if (value === true) {
-        // Хуучин хувилбарын client (цаггүй) — onDisconnect-оор устах тул тоолно
-        fresh += 1;
-      } else if (typeof value === "number") {
+      if (typeof value === "number") {
         const age = now - value;
         if (age < STALE_MS) fresh += 1;
         else if (age > PURGE_AFTER_MS) purgePaths.push(`${rootPath}/${id}/${connectionId}`);
+      } else {
+        // `true` гэх мэт цаггүй утга = хуучин хувилбарын client (нуугдсан tab-ыг хасдаггүй,
+        // logout хийсэн ч үлддэг байсан). Тоолохгүй, цэвэрлэнэ.
+        purgePaths.push(`${rootPath}/${id}/${connectionId}`);
       }
     }
 
