@@ -56,8 +56,11 @@ interface AnalyticsData {
   weeklyData: Array<{ week: string; users: number }>;
 }
 
-// Tab нээлттэй байх үед статистикийг 1 минут тутам автоматаар шинэчилнэ
-const AUTO_REFRESH_MS = 60_000;
+// Tab нээлттэй байх үед Firestore-ийн статистикийг (нийт хэрэглэгч, идэвхжүүлсэн, ном, бүлэг)
+// 30 минут тутам автоматаар шинэчилнэ. Шинэчлэлт бүр ~150 + номын тоо орчим Firestore уншилт
+// зарцуулдаг тул хэт ойр тавихгүй. "Одоо онлайн" нь Realtime Database-ээс шууд ирдэг тул
+// энэ тохиргооноос хамаарахгүй, үргэлж real-time. 0 болговол автомат шинэчлэлт унтарна.
+const AUTO_REFRESH_MS = 30 * 60 * 1000;
 
 // Cyberpunk палитр
 const NEON = {
@@ -392,7 +395,7 @@ export default function Analytics({ sidePanel, children }: AnalyticsProps) {
 
   // Tab харагдаж байх үед автоматаар шинэчилнэ, буцаж ирэхэд хуучирсан бол шууд татна
   useEffect(() => {
-    if (authLoading || !uid) return;
+    if (authLoading || !uid || AUTO_REFRESH_MS <= 0) return;
 
     const refreshIfStale = () => {
       if (document.visibilityState !== 'visible') return;
