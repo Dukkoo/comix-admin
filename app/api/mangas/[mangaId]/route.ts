@@ -41,6 +41,7 @@ export async function GET(
       mangaImage: data?.mangaImage || "",
       avatarImage: data?.avatarImage || "",
       chapters: data?.chapters || 0,
+      novelChapters: data?.novelChapters || 0, // Novel бүлгийн тоо
       createdAt: data?.createdAt,
       updatedAt: data?.updatedAt,
       createdBy: data?.createdBy,
@@ -183,6 +184,21 @@ export async function DELETE(
       await chapterDoc.ref.delete();
     }
 
+    // Novel бүлгүүдийг (зөвхөн текст, R2 зураггүй) устгана. Тэгэхгүй бол манхваг устгасны дараа
+    // mangas/{id}/novelChapters дотор өгөгдөл өнчин болж үлдэнэ.
+    const novelSnapshot = await firestore
+      .collection("mangas")
+      .doc(mangaId)
+      .collection("novelChapters")
+      .select()
+      .get();
+
+    for (let start = 0; start < novelSnapshot.docs.length; start += 400) {
+      const batch = firestore.batch();
+      novelSnapshot.docs.slice(start, start + 400).forEach((novelDoc) => batch.delete(novelDoc.ref));
+      await batch.commit();
+    }
+
     const imageFields = ["coverImage", "mangaImage", "avatarImage"];
     for (const field of imageFields) {
       if (mangaData?.[field]) {
@@ -204,6 +220,7 @@ export async function DELETE(
       message: "Manga deleted successfully",
       filesDeleted: deletedFiles,
       chaptersDeleted: chaptersSnapshot.size,
+      novelChaptersDeleted: novelSnapshot.size,
     });
   } catch (error) {
     console.error("Error deleting manga:", error);
