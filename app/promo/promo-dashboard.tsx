@@ -16,6 +16,8 @@ import { useAuth } from "@/app/providers";
 import {
   createPromoCode,
   deletePromoCode,
+  deletePromoUsage,
+  deletePromoUsages,
   fetchPromoCodes,
   fetchPromoUsages,
   updatePromoCode,
@@ -49,6 +51,8 @@ type DialogState =
   | { kind: "create" }
   | { kind: "edit"; promo: PromoCode }
   | { kind: "delete"; promo: PromoCode }
+  | { kind: "deleteUsage"; usage: PromoUsage }
+  | { kind: "deleteUsages" }
   | null;
 
 const emptyForm = (): FormState => ({
@@ -119,6 +123,9 @@ export default function PromoDashboard() {
   const [usageLimit, setUsageLimit] = useState(USAGE_PAGE_SIZE);
   const usageRequestId = useRef(0);
   const usageRef = useRef<HTMLElement>(null);
+  // Олноор устгахад сонгосон бичлэгүүдийн ID. Shift дарж сонговол сүүлд дарсан мөрөөс хүртэлх мөрүүдийг сонгоно.
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
+  const lastToggledIndex = useRef<number | null>(null);
 
   const [search, setSearch] = useState("");
   const [dialog, setDialog] = useState<DialogState>(null);
@@ -164,6 +171,12 @@ export default function PromoDashboard() {
         if (requestId !== usageRequestId.current) return;
         setUsages(result.data);
         setUsageHasMore(result.hasMore);
+        // Жагсаалтад байхаа больсон (устсан/шүүлтүүрээс гарсан) бичлэгийг сонголтоос хасна
+        const visibleIds = new Set(result.data.map((usage) => usage.id));
+        setSelectedIds((prev) => {
+          const next = new Set([...prev].filter((id) => visibleIds.has(id)));
+          return next.size === prev.size ? prev : next;
+        });
       } catch (error) {
         if (requestId !== usageRequestId.current) return;
         console.error("Error loading promo usages:", error);
@@ -196,6 +209,21 @@ export default function PromoDashboard() {
   };
 
   const activeCount = useMemo(() => codes.filter((promo) => promo.isActive).length, [codes]);
+
+  // Сонгосон бичлэгүүд (жагсаалтын дарааллаар) ба тэдгээрийн нийлбэр
+  const selectedUsages = useMemo(() => usages.filter((usage) => selectedIds.has(usage.id)), [usages, selectedIds]);
+  const selectedSummary = useMemo(() => {
+    const perCode = new Map<string, number>();
+    let amount = 0;
+    let bonusDays = 0;
+    for (const usage of selectedUsages) {
+      amount += usage.amount;
+      bonusDays += usage.bonusDays;
+      perCode.set(usage.code, (perCode.get(usage.code) ?? 0) + 1);
+    }
+    return { amount, bonusDays, perCode: [...perCode.entries()] };
+  }, [selectedUsages]);
+  const allUsagesSelected = usages.length > 0 && selectedUsages.length === usages.length;
 
   const visibleCodes = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -363,6 +391,101 @@ export default function PromoDashboard() {
     }
   };
 
+  // Ашиглалтын нэг бичлэгийг устгана. Зөвхөн түүх, статистикаас хасна: хэрэглэгчийн эрх өөрчлөгдөхгүй.
+  const handleDeleteUsage = async () => {
+    if (!dialog || dialog.kind !== "deleteUsage" || submitting) return;
+    const target = dialog.usage;
+    setSubmitting(true);
+
+    try {
+      const response = await deletePromoUsage(target.id, await getToken());
+
+      if (response.error) {
+        toast.error("Устгаж чадсангүй", { description: response.message });
+      } else {
+        toast.success("Ашиглалтын бүртгэл устгагдлаа", {
+          description: `${target.code} · ${target.userName || target.userId || "-"}`,
+        });
+        setUsages((prev) => prev.filter((usage) => usage.id !== target.id));
+      }
+
+      setDialog(null);
+      // Алдаа гарсан ч (жишээ нь өөр цонхоос аль хэдийн устгасан) жагсаалт, статистикийг сервертэй тааруулна
+      loadCodes();
+      loadUsages(usageCode, usageLimit);
+    } catch (error) {
+      console.error("Error deleting promo usage:", error);
+      toast.error("Устгаж чадсангүй", { description: error instanceof Error ? error.message : undefined });
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const clearSelection = () => {
+    setSelectedIds(new Set());
+    lastToggledIndex.current = null;
+  };
+
+  // Мөр сонгох/болиулах. Shift дарвал сүүлд дарсан мөрөөс энэ мөр хүртэл бүгдийг нэг дор сонгоно.
+  const toggleUsage = (index: number, checked: boolean, shiftKey: boolean) => {
+    const last = lastToggledIndex.current;
+    const from = shiftKey && last !== null ? Math.min(last, index) : index;
+    const to = shiftKey && last !== null ? Math.max(last, index) : index;
+
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      for (let i = from; i <= to; i++) {
+        const id = usages[i]?.id;
+        if (!id) continue;
+        if (checked) next.add(id);
+        else next.delete(id);
+      }
+      return next;
+    });
+    lastToggledIndex.current = index;
+  };
+
+  // Толгойн checkbox: харагдаж буй бүх мөрийг сонгох / бүгдийг болиулах
+  const toggleAllUsages = () => {
+    if (allUsagesSelected) {
+      clearSelection();
+    } else {
+      setSelectedIds(new Set(usages.map((usage) => usage.id)));
+      lastToggledIndex.current = null;
+    }
+  };
+
+  // Сонгосон бичлэгүүдийг нэг дор устгана (сервер дээр нэг batch). Зөвхөн түүх, статистикаас хасна.
+  const handleDeleteSelected = async () => {
+    if (!dialog || dialog.kind !== "deleteUsages" || submitting) return;
+    const ids = selectedUsages.map((usage) => usage.id);
+    if (ids.length === 0) return;
+    setSubmitting(true);
+
+    try {
+      const response = await deletePromoUsages(ids, await getToken());
+
+      if (response.error) {
+        toast.error("Устгаж чадсангүй", { description: response.message });
+      } else {
+        toast.success("Ашиглалтын бүртгэл устгагдлаа", { description: response.message });
+        const removed = new Set(ids);
+        setUsages((prev) => prev.filter((usage) => !removed.has(usage.id)));
+        clearSelection();
+      }
+
+      setDialog(null);
+      // Алдаа гарсан ч жагсаалт, статистикийг сервертэй тааруулна (сонголт нь жагсаалтад үлдсэнээр цэвэрлэгдэнэ)
+      loadCodes();
+      loadUsages(usageCode, usageLimit);
+    } catch (error) {
+      console.error("Error deleting promo usages:", error);
+      toast.error("Устгаж чадсангүй", { description: error instanceof Error ? error.message : undefined });
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   const handleCopy = async (code: string) => {
     try {
       await navigator.clipboard.writeText(code);
@@ -375,12 +498,14 @@ export default function PromoDashboard() {
   };
 
   const handleShowHistory = (code: string) => {
+    clearSelection();
     setUsageCode(code);
     setUsageLimit(USAGE_PAGE_SIZE);
     requestAnimationFrame(() => usageRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }));
   };
 
   const handleUsageCodeChange = (value: string) => {
+    clearSelection();
     setUsageCode(value);
     setUsageLimit(USAGE_PAGE_SIZE);
   };
@@ -399,7 +524,7 @@ export default function PromoDashboard() {
   const isEdit = dialog?.kind === "edit";
 
   return (
-    <div className="cyber-bg min-h-screen w-full p-4 sm:p-6 [&_a]:rounded-[3px] [&_button]:rounded-[3px] [&_.cyber-panel::after]:hidden [&_.cyber-panel::before]:hidden">
+    <div className={`cyber-bg min-h-screen w-full p-4 sm:p-6 ${selectedUsages.length > 0 ? "pb-24 sm:pb-24" : ""} [&_a]:rounded-[3px] [&_button]:rounded-[3px] [&_.cyber-panel::after]:hidden [&_.cyber-panel::before]:hidden`}>
       <div className="relative z-10 mx-auto max-w-6xl space-y-6">
         {/* Toolbar: доош scroll хийхэд дээр нь тогтоно */}
         <div className="sticky top-0 z-20 -mx-4 -mt-4 flex flex-col gap-3 bg-[#04050a]/90 px-4 py-3 backdrop-blur-md sm:-mx-6 sm:-mt-6 sm:px-6 lg:flex-row lg:items-center">
@@ -602,7 +727,7 @@ export default function PromoDashboard() {
                         onClick={() => setDialog({ kind: "delete", promo })}
                         disabled={used}
                         aria-label={`${promo.code} кодыг устгах`}
-                        title={used ? "Ашиглагдсан код устгагдахгүй. Идэвхгүй болгоно уу" : "Устгах"}
+                        title={used ? "Ашиглагдсан код устгагдахгүй. Идэвхгүй болгоно уу (эсвэл эхлээд ашиглалтын бичлэгүүдийг устгана)" : "Устгах"}
                         className="flex h-8 w-8 shrink-0 items-center justify-center border border-[#ff2e88]/40 bg-[#ff2e88]/10 text-[#ff2e88] transition-colors hover:bg-[#ff2e88]/30 hover:text-white disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:bg-[#ff2e88]/10 disabled:hover:text-[#ff2e88]"
                       >
                         <Trash2 className="h-3.5 w-3.5" />
@@ -655,19 +780,55 @@ export default function PromoDashboard() {
               </p>
             ) : (
               <div className={`overflow-x-auto transition-opacity ${usageLoading ? "opacity-60" : ""}`}>
-                <table className="w-full min-w-[640px] text-left text-sm">
+                <table className="w-full min-w-[740px] text-left text-sm">
                   <thead>
                     <tr className="border-b border-white/10 text-xs text-zinc-500">
+                      <th scope="col" className="w-10 py-2.5 pl-4 pr-0 font-medium">
+                        <input
+                          type="checkbox"
+                          checked={allUsagesSelected}
+                          ref={(el) => {
+                            if (el) el.indeterminate = selectedUsages.length > 0 && !allUsagesSelected;
+                          }}
+                          onChange={() => {}}
+                          onClick={toggleAllUsages}
+                          aria-label="Харагдаж буй бүх бичлэгийг сонгох"
+                          title="Бүгдийг сонгох"
+                          className="h-4 w-4 cursor-pointer accent-[#00f0ff] align-middle"
+                        />
+                      </th>
                       <th className="px-4 py-2.5 font-medium">Огноо</th>
                       <th className="px-4 py-2.5 font-medium">Хэрэглэгч</th>
                       <th className="px-4 py-2.5 font-medium">Код</th>
                       <th className="px-4 py-2.5 text-right font-medium">Дүн</th>
                       <th className="px-4 py-2.5 text-right font-medium">Нэмэлт хоног</th>
+                      {/* sr-only ашиглахгүй: absolute элемент overflow-x-auto контейнерт хавчигдахгүй, утсан дээр хуудсыг хэвтээ сунгадаг */}
+                      <th scope="col" aria-label="Үйлдэл" className="w-14 px-3 py-2.5" />
                     </tr>
                   </thead>
                   <tbody>
-                    {usages.map((usage) => (
-                      <tr key={usage.id} className="border-b border-white/5 last:border-b-0 hover:bg-white/[0.03]">
+                    {usages.map((usage, index) => {
+                      const selected = selectedIds.has(usage.id);
+                      return (
+                      <tr
+                        key={usage.id}
+                        data-selected={selected ? "true" : undefined}
+                        className={`border-b border-white/5 last:border-b-0 hover:bg-white/[0.03] ${selected ? "bg-[#ff2e88]/[0.07]" : ""}`}
+                      >
+                        <td className="w-10 py-2.5 pl-4 pr-0">
+                          <input
+                            type="checkbox"
+                            checked={selected}
+                            onChange={() => {}}
+                            onMouseDown={(e) => {
+                              // Shift+click-ийн үед текст сонгогдохоос сэргийлнэ
+                              if (e.shiftKey) e.preventDefault();
+                            }}
+                            onClick={(e) => toggleUsage(index, !selected, e.shiftKey)}
+                            aria-label={`${usage.userName || usage.userId || "Хэрэглэгч"} (${usage.code}) бичлэгийг сонгох`}
+                            className="h-4 w-4 cursor-pointer accent-[#00f0ff] align-middle"
+                          />
+                        </td>
                         <td className="whitespace-nowrap px-4 py-2.5 tabular-nums text-zinc-300">
                           {formatDateTime(usage.createdAt)}
                         </td>
@@ -691,8 +852,20 @@ export default function PromoDashboard() {
                         <td className="whitespace-nowrap px-4 py-2.5 text-right tabular-nums text-[#ffd23f]">
                           +{usage.bonusDays}
                         </td>
+                        <td className="px-3 py-2.5 text-right">
+                          <button
+                            type="button"
+                            onClick={() => setDialog({ kind: "deleteUsage", usage })}
+                            aria-label={`${usage.userName || usage.userId || "Хэрэглэгч"} (${usage.code}) бичлэгийг устгах`}
+                            title="Бичлэгийг устгах"
+                            className="inline-flex h-8 w-8 items-center justify-center border border-[#ff2e88]/40 bg-[#ff2e88]/10 text-[#ff2e88] transition-colors hover:bg-[#ff2e88]/30 hover:text-white"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </td>
                       </tr>
-                    ))}
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -713,6 +886,30 @@ export default function PromoDashboard() {
           </div>
         </section>
       </div>
+
+      {/* Сонгосон бичлэгийн самбар: дэлгэцийн доор тогтоно (хүснэгтийг түлхэхгүй) */}
+      {selectedUsages.length > 0 && (
+        <div
+          role="region"
+          aria-label="Сонгосон бичлэгүүд"
+          className="fixed bottom-4 left-1/2 z-30 flex w-[calc(100%-2rem)] max-w-md -translate-x-1/2 items-center gap-2 border border-[#ff2e88]/50 bg-[#0b0e1c]/95 px-3 py-2.5 shadow-lg backdrop-blur-md sm:w-auto sm:max-w-none sm:gap-3 sm:px-4"
+        >
+          <p className="min-w-0 flex-1 truncate text-sm text-white sm:flex-none">
+            <span className="font-display font-bold tabular-nums text-[#ff2e88]">{selectedUsages.length}</span> бичлэг сонгосон
+          </p>
+          <button type="button" onClick={clearSelection} className="cyber-btn shrink-0 rounded-[3px] px-3 py-1.5 text-sm">
+            Болих
+          </button>
+          <button
+            type="button"
+            onClick={() => setDialog({ kind: "deleteUsages" })}
+            className="inline-flex shrink-0 items-center gap-1.5 rounded-[3px] border border-[#ff2e88]/70 bg-[#ff2e88]/25 px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-[#ff2e88]/45"
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+            Устгах
+          </button>
+        </div>
+      )}
 
       {/* Шинээр үүсгэх / засах */}
       <Dialog
@@ -870,6 +1067,106 @@ export default function PromoDashboard() {
             <button
               type="button"
               onClick={handleDelete}
+              disabled={submitting}
+              className="rounded-[3px] border border-[#ff2e88]/70 bg-[#ff2e88]/25 px-5 py-2 text-sm font-medium text-white transition-colors hover:bg-[#ff2e88]/45 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {submitting ? "Устгаж байна..." : "Устгах"}
+            </button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Сонгосон олон бичлэг устгах */}
+      <Dialog
+        open={dialog?.kind === "deleteUsages"}
+        onOpenChange={(open) => {
+          if (!open) closeDialog();
+        }}
+      >
+        <DialogContent className="border border-[#ff2e88]/40 bg-[#0b0e1c] text-white">
+          <DialogHeader>
+            <DialogTitle className="font-display">{selectedUsages.length} бичлэг устгах</DialogTitle>
+            <DialogDescription className="text-zinc-400">
+              Сонгосон бичлэгүүд зөвхөн «Ашиглалтын түүх» болон статистикаас хасагдана. Хэрэглэгчийн авсан эрх, төлбөрийн
+              түүх өөрчлөгдөхгүй. Сэргээх боломжгүй.
+            </DialogDescription>
+          </DialogHeader>
+          <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 border border-white/10 bg-black/30 px-3 py-2.5 text-sm">
+            <dt className="text-zinc-500">Бичлэг</dt>
+            <dd className="tabular-nums text-white">{selectedUsages.length}</dd>
+            <dt className="text-zinc-500">Нийт дүн</dt>
+            <dd className="tabular-nums text-white">{formatMoney(selectedSummary.amount)}</dd>
+            <dt className="text-zinc-500">Нэмэлт хоног</dt>
+            <dd className="tabular-nums text-[#ffd23f]">+{selectedSummary.bonusDays}</dd>
+            <dt className="text-zinc-500">Код</dt>
+            <dd className="min-w-0 break-words font-display font-bold tracking-wide text-[#00f0ff]">
+              {selectedSummary.perCode.map(([code, count]) => `${code} ×${count}`).join(", ")}
+            </dd>
+          </dl>
+          <DialogFooter className="gap-2">
+            <button
+              type="button"
+              onClick={closeDialog}
+              disabled={submitting}
+              className="cyber-btn rounded-[3px] px-5 py-2 text-sm"
+            >
+              Цуцлах
+            </button>
+            <button
+              type="button"
+              onClick={handleDeleteSelected}
+              disabled={submitting || selectedUsages.length === 0}
+              className="rounded-[3px] border border-[#ff2e88]/70 bg-[#ff2e88]/25 px-5 py-2 text-sm font-medium text-white transition-colors hover:bg-[#ff2e88]/45 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {submitting ? "Устгаж байна..." : `${selectedUsages.length} бичлэг устгах`}
+            </button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Ашиглалтын бичлэг устгах */}
+      <Dialog
+        open={dialog?.kind === "deleteUsage"}
+        onOpenChange={(open) => {
+          if (!open) closeDialog();
+        }}
+      >
+        <DialogContent className="border border-[#ff2e88]/40 bg-[#0b0e1c] text-white">
+          <DialogHeader>
+            <DialogTitle className="font-display">Ашиглалтын бүртгэл устгах</DialogTitle>
+            <DialogDescription className="text-zinc-400">
+              Энэ бичлэг зөвхөн «Ашиглалтын түүх» болон статистикаас хасагдана. Хэрэглэгчийн авсан эрх, төлбөрийн түүх
+              өөрчлөгдөхгүй. Сэргээх боломжгүй.
+            </DialogDescription>
+          </DialogHeader>
+          {dialog?.kind === "deleteUsage" && (
+            <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 border border-white/10 bg-black/30 px-3 py-2.5 text-sm">
+              <dt className="text-zinc-500">Хэрэглэгч</dt>
+              <dd className="min-w-0 truncate text-white">
+                {dialog.usage.userName || dialog.usage.userId || "-"}
+              </dd>
+              <dt className="text-zinc-500">Код</dt>
+              <dd className="font-display font-bold tracking-wide text-[#00f0ff]">{dialog.usage.code}</dd>
+              <dt className="text-zinc-500">Огноо</dt>
+              <dd className="tabular-nums text-zinc-300">{formatDateTime(dialog.usage.createdAt)}</dd>
+              <dt className="text-zinc-500">Дүн</dt>
+              <dd className="tabular-nums text-white">
+                {formatMoney(dialog.usage.amount)} · +{dialog.usage.bonusDays} хоног
+              </dd>
+            </dl>
+          )}
+          <DialogFooter className="gap-2">
+            <button
+              type="button"
+              onClick={closeDialog}
+              disabled={submitting}
+              className="cyber-btn rounded-[3px] px-5 py-2 text-sm"
+            >
+              Цуцлах
+            </button>
+            <button
+              type="button"
+              onClick={handleDeleteUsage}
               disabled={submitting}
               className="rounded-[3px] border border-[#ff2e88]/70 bg-[#ff2e88]/25 px-5 py-2 text-sm font-medium text-white transition-colors hover:bg-[#ff2e88]/45 disabled:cursor-not-allowed disabled:opacity-50"
             >

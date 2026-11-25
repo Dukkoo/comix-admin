@@ -151,6 +151,21 @@ export const updatePromoCode = (code: string, changes: PromoUpdateInput, token: 
     body: JSON.stringify(changes),
   });
 
+/** Ашиглалтын нэг бичлэгийг (түүх + статистикаас) устгана. Хэрэглэгчийн эрх өөрчлөгдөхгүй. */
+export const deletePromoUsage = (id: string, token: string) =>
+  send(`/api/promo-usages/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+
+/** Ашиглалтын олон бичлэгийг нэг дор устгана (нэг batch: бүгд эсвэл огт). Хэрэглэгчийн эрх өөрчлөгдөхгүй. */
+export const deletePromoUsages = (ids: string[], token: string) =>
+  send("/api/promo-usages/bulk-delete", {
+    method: "POST",
+    headers: authHeaders(token),
+    body: JSON.stringify({ ids }),
+  });
+
 export const deletePromoCode = (code: string, token: string) =>
   send(`/api/promo-codes/${encodeURIComponent(code)}`, {
     method: "DELETE",

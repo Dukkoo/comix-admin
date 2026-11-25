@@ -223,6 +223,84 @@ export async function loadPromoUsages(options: { code?: string; limit: number })
   return { data: rows.slice(0, limit), hasMore: rows.length > limit };
 }
 
+// Ашиглалтын бичлэгийн ID = клиент сайтын төлбөрийн нэхэмжлэхийн ID (QPay-ийн UUID г.м.).
+// Firestore-ийн замыг эвдэх тэмдэгт (/ г.м.) оруулахгүй.
+const USAGE_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
+
+/** URL дахь ашиглалтын бичлэгийн ID-г шалгана. Буруу бол 400. */
+export function parseUsageIdParam(raw: string): string {
+  const id = raw.trim();
+  if (!USAGE_ID_PATTERN.test(id)) {
+    throw new PromoApiError(400, "Ашиглалтын бүртгэлийн ID буруу байна");
+  }
+  return id;
+}
+
+/**
+ * Ашиглалтын нэг бичлэгийг устгана (жишээ нь туршилтын төлбөр). Олдохгүй бол 404.
+ * АНХААР: зөвхөн энэ түүх болон статистикаас хасна. Хэрэглэгчийн олгогдсон эрх, төлбөрийн түүх
+ * (pending_payments, payment_logs) өөрчлөгдөхгүй. Нэхэмжлэх аль хэдийн "completed" тул дахин бичигдэхгүй.
+ * Устгасан бичлэгийг буцаана (аудитын лог бичихэд).
+ */
+export async function deletePromoUsage(id: string): Promise<PromoUsage> {
+  const reference = promoUsagesCollection().doc(id);
+  const snapshot = await reference.get();
+
+  if (!snapshot.exists) {
+    throw new PromoApiError(404, "Ашиглалтын бүртгэл олдсонгүй");
+  }
+
+  const usage = toPromoUsage(snapshot.id, snapshot.data() ?? {});
+  await reference.delete();
+  return usage;
+}
+
+// Нэг удаад устгах бичлэгийн дээд хязгаар (Firestore-ийн нэг batch 500 үйлдэл)
+export const USAGE_BULK_DELETE_MAX = 500;
+
+/** Олноор устгах хүсэлтийн `ids`-г шалгана (давхардлыг хасна). Буруу бол 400. */
+export function parseUsageIds(body: unknown): string[] {
+  const raw = (body as { ids?: unknown } | null)?.ids;
+
+  if (!Array.isArray(raw) || raw.length === 0) {
+    throw new PromoApiError(400, "Устгах бичлэгээ сонгоно уу");
+  }
+  if (raw.length > USAGE_BULK_DELETE_MAX) {
+    throw new PromoApiError(400, `Нэг удаад дээд тал нь ${USAGE_BULK_DELETE_MAX} бичлэг устгана`);
+  }
+
+  const ids = new Set<string>();
+  for (const item of raw) {
+    if (typeof item !== "string") {
+      throw new PromoApiError(400, "Ашиглалтын бүртгэлийн ID буруу байна");
+    }
+    ids.add(parseUsageIdParam(item));
+  }
+  return [...ids];
+}
+
+/**
+ * Ашиглалтын олон бичлэгийг НЭГ batch-ээр устгана: бүгд устах эсвэл огт устахгүй.
+ * Аль хэдийн устсан (олдоогүй) ID-г чимээгүй алгасна. Бүгд олдохгүй бол 404.
+ * Хэрэглэгчийн олгогдсон эрх, төлбөрийн түүхэд хөндөхгүй (deletePromoUsage-тэй адил).
+ * Устгасан бичлэгүүдийг буцаана (аудитын лог бичихэд).
+ */
+export async function deletePromoUsages(ids: string[]): Promise<PromoUsage[]> {
+  const references = ids.map((id) => promoUsagesCollection().doc(id));
+  const snapshots = await firestore.getAll(...references);
+  const existing = snapshots.filter((snapshot) => snapshot.exists);
+
+  if (existing.length === 0) {
+    throw new PromoApiError(404, "Ашиглалтын бүртгэл олдсонгүй");
+  }
+
+  const batch = firestore.batch();
+  for (const snapshot of existing) batch.delete(snapshot.ref);
+  await batch.commit();
+
+  return existing.map((snapshot) => toPromoUsage(snapshot.id, snapshot.data() ?? {}));
+}
+
 /** Энэ кодоор ядаж нэг удаа худалдан авалт хийгдсэн эсэх */
 export async function promoCodeHasUsages(code: string): Promise<boolean> {
   const snapshot = await promoUsagesCollection().where("code", "==", code).limit(1).get();
